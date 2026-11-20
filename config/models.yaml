@@ -1,0 +1,17 @@
+proxy:
+  api_base: os.environ/LITELLM_API_BASE
+  api_key: os.environ/LITELLM_API_KEY
+models:
+  - name: openrouter-free
+    rpm: 20
+    timeout: 45
+  - name: gemini-flash
+    rpm: 20
+    timeout: 45
+router:
+  num_retries: 1
+  cooldown_time: 30
+  allowed_fails: 3
+budget:
+  daily_soft_limit: 45
+judge_model: gemini-flash
