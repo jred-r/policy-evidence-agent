@@ -39,34 +39,40 @@ def _draft(question_id: str, answer: str, passage_id: str) -> DraftedAnswer:
     return DraftedAnswer(
         question_id=question_id,
         answer=answer,
-        confidence=0.8,
+        in_scope=True,
+        policy_related=True,
         citations=[Citation(passage_id=passage_id)],
     )
 
 
-def test_evaluation_reports_retries_and_escalations(
+def test_evaluation_reports_single_pass_answers_and_off_topic_results(
     monkeypatch, tmp_path: Path
 ) -> None:
     dataset = load_data(Path("data"))
-    initial = [
+    answers = [
         _draft(
             question.id,
-            "Unsupported draft." if question.id in {"Q001", "Q002"} else
-            next(item.answer for item in dataset.answer_key if item.question_id == question.id),
+            next(
+                item.answer
+                for item in dataset.answer_key
+                if item.question_id == question.id
+            ),
             f"P{int(question.id[1:]):03}",
         )
         for question in dataset.questions
     ]
-    retried = [
-        _draft("Q001", dataset.answer_key[0].answer, "P001"),
-        _draft("Q002", "Still unsupported.", "P002"),
-    ]
-    calls = 0
+    answers[0] = DraftedAnswer(
+        question_id=answers[0].question_id,
+        answer="I can help with policy questions.",
+        in_scope=False,
+        policy_related=False,
+        citations=[],
+    )
+    calls = []
 
     def draft_answers(questions, retriever, batch_size):
-        nonlocal calls
-        calls += 1
-        return initial if calls == 1 else retried
+        calls.append(len(questions))
+        return answers
 
     monkeypatch.setattr(evaluation, "draft_answers", draft_answers)
 
@@ -76,10 +82,8 @@ def test_evaluation_reports_retries_and_escalations(
         output_dir=tmp_path / "results",
     )
 
-    assert result["first_attempt_pass_rate"] == 0.95
-    assert result["f1_after_retries"] == 0.975
-    assert result["escalated_percent"] == 2.5
-    assert result["answers"][0]["attempts"] == 2
-    assert result["answers"][1]["status"] == "review"
+    assert calls == [len(dataset.questions)]
+    assert result["out_of_scope_percent"] > 0
+    assert result["answers"][0]["status"] == "off_topic"
     assert (tmp_path / "results" / "evaluation.json").exists()
     assert (tmp_path / "results" / "summary.txt").exists()

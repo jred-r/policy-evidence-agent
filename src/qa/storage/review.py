@@ -1,4 +1,4 @@
-"""Persistent queue for human answer review."""
+"""Persistence for automatic and explicitly requested human review."""
 
 from __future__ import annotations
 
@@ -9,53 +9,41 @@ from psycopg.types.json import Jsonb
 from .audit import emit_event, insert_event
 from .db import connection
 
+PENDING_REVIEW_MESSAGE = (
+    "This answer is awaiting human approval. It will appear here once a reviewer approves it."
+)
+REJECTED_REVIEW_MESSAGE = (
+    "A human reviewer did not approve this answer. "
+    "You can ask a follow-up or contact the policy owner."
+)
+
 
 class ReviewStore:
-    """PostgreSQL-backed review queue and decision log."""
-
-    def __init__(self, dsn: str | None = None) -> None:
-        self.dsn = dsn
-
-    def enqueue(self, question_id: str, payload: dict[str, Any]) -> None:
-        """Insert or replace a pending answer in the review queue."""
-        answer = payload.get("answer")
-        confidence = answer.get("confidence") if isinstance(answer, dict) else None
-        with connection(self.dsn) as conn:
-            with conn.transaction():
-                conn.execute(
-                    """
-                    INSERT INTO qa_review_queue
-                        (question_id, payload, status, decision, updated_at)
-                    VALUES (%s, %s, 'pending', NULL, now())
-                    ON CONFLICT (question_id) DO UPDATE SET
-                        payload = EXCLUDED.payload,
-                        status = 'pending',
-                        decision = NULL,
-                        updated_at = now()
-                    """,
-                    (question_id, Jsonb(payload)),
-                )
-                audit_event = insert_event(
-                    conn,
-                    "review.queued",
-                    question_id=question_id,
-                    details={"confidence": confidence},
-                )
-        emit_event(audit_event)
+    """PostgreSQL-backed queue for answers awaiting human approval."""
 
     def list_pending(self) -> list[dict[str, Any]]:
-        """Return pending review items in stable question order."""
-        with connection(self.dsn) as conn:
+        """Return answers explicitly submitted for approval."""
+        with connection() as conn:
             rows = conn.execute(
-                "SELECT question_id, payload, status, updated_at FROM qa_review_queue "
-                "WHERE status='pending' ORDER BY updated_at DESC, question_id"
+                """
+                SELECT question_id, session_id, question_text, draft_answer, citations,
+                    grounding_f1, trigger_reason, status, created_at
+                FROM qa_review_requests
+                WHERE status = 'pending'
+                ORDER BY created_at, question_id
+                """
             ).fetchall()
         return [
             {
                 "question_id": row["question_id"],
+                "session_id": row["session_id"],
+                "question": row["question_text"],
+                "answer": row["draft_answer"],
+                "citations": row["citations"],
+                "grounding_f1": row["grounding_f1"],
+                "trigger_reason": row["trigger_reason"],
                 "status": row["status"],
-                "updated_at": row["updated_at"],
-                **row["payload"],
+                "created_at": row["created_at"],
             }
             for row in rows
         ]
@@ -63,80 +51,104 @@ class ReviewStore:
     def decide(
         self, question_id: str, approved: bool, edited_answer: str | None = None
     ) -> dict[str, Any]:
-        """Persist approval or an edited answer and return the final item."""
-        with connection(self.dsn) as conn:
+        """Approve or reject a pending answer and update its chat message."""
+        if edited_answer is not None and not edited_answer.strip():
+            raise ValueError("An edited answer cannot be blank")
+
+        with connection() as conn:
             with conn.transaction():
                 row = conn.execute(
-                    "SELECT payload, status FROM qa_review_queue "
-                    "WHERE question_id=%s FOR UPDATE",
+                    """
+                    SELECT session_id, question_text, draft_answer, citations, status
+                    FROM qa_review_requests
+                    WHERE question_id = %s
+                    FOR UPDATE
+                    """,
                     (question_id,),
                 ).fetchone()
                 if row is None:
-                    raise KeyError(f"No review item for {question_id}")
+                    raise KeyError(f"No review request for {question_id}")
                 if row["status"] != "pending":
-                    raise ValueError(f"Review item {question_id} is already decided")
-                payload = row["payload"]
-                if edited_answer is not None:
-                    payload["answer"] = edited_answer
+                    raise ValueError(f"Review request {question_id} is already decided")
+
                 status = "approved" if approved else "rejected"
+                answer = (
+                    edited_answer.strip()
+                    if approved and edited_answer is not None
+                    else row["draft_answer"]
+                )
+                visible_answer = (
+                    answer
+                    if approved
+                    else REJECTED_REVIEW_MESSAGE
+                )
+                visible_citations = row["citations"] if approved else []
                 conn.execute(
                     """
-                    UPDATE qa_review_queue
-                    SET payload=%s, status=%s, decision=%s, updated_at=now()
-                    WHERE question_id=%s
+                    UPDATE qa_review_requests
+                    SET draft_answer = %s, status = %s, decision = %s, updated_at = now()
+                    WHERE question_id = %s
                     """,
                     (
-                        Jsonb(payload),
+                        answer,
                         status,
                         Jsonb(
                             {
                                 "approved": approved,
-                                "edited": edited_answer is not None,
+                                "edited": approved and edited_answer is not None,
                             }
                         ),
                         question_id,
                     ),
                 )
-                if edited_answer is not None:
-                    conn.execute(
-                        """
-                        UPDATE qa_chat_messages
-                        SET content=%s,
-                            metadata=jsonb_set(metadata, '{status}', to_jsonb(%s::text), true)
-                        WHERE metadata->>'question_id'=%s
-                        """,
-                        (edited_answer, status, question_id),
+                updated_message = conn.execute(
+                    """
+                    UPDATE qa_chat_messages
+                    SET content = %s,
+                        metadata = jsonb_set(
+                            jsonb_set(
+                                metadata,
+                                '{human_review_status}',
+                                to_jsonb(%s::text),
+                                true
+                            ),
+                            '{citations}',
+                            %s::jsonb,
+                            true
+                        )
+                    WHERE session_id = %s
+                        AND role = 'assistant'
+                        AND metadata->>'question_id' = %s
+                    """,
+                    (
+                        visible_answer,
+                        status,
+                        Jsonb(visible_citations),
+                        row["session_id"],
+                        question_id,
+                    ),
+                )
+                if updated_message.rowcount != 1:
+                    raise RuntimeError(
+                        f"Review request {question_id} has no corresponding chat answer"
                     )
-                else:
-                    conn.execute(
-                        """
-                        UPDATE qa_chat_messages
-                        SET metadata=jsonb_set(metadata, '{status}', to_jsonb(%s::text), true)
-                        WHERE metadata->>'question_id'=%s
-                        """,
-                        (status, question_id),
-                    )
-                audit_event = insert_event(
+                event = insert_event(
                     conn,
                     "review.decided",
+                    session_id=row["session_id"],
                     question_id=question_id,
                     details={
                         "status": status,
-                        "edited": edited_answer is not None,
+                        "edited": approved and edited_answer is not None,
                     },
                 )
-        emit_event(audit_event)
-        return {"question_id": question_id, **payload, "status": status}
 
-    def get_final(self, question_id: str) -> dict[str, Any]:
-        """Return an approved item for export."""
-        with connection(self.dsn) as conn:
-            row = conn.execute(
-                "SELECT payload, status FROM qa_review_queue WHERE question_id=%s",
-                (question_id,),
-            ).fetchone()
-        if row is None:
-            raise KeyError(f"No review item for {question_id}")
-        if row["status"] != "approved":
-            raise ValueError(f"Review item {question_id} is not approved")
-        return {"question_id": question_id, **row["payload"]}
+        emit_event(event)
+        return {
+            "question_id": question_id,
+            "session_id": row["session_id"],
+            "question": row["question_text"],
+            "answer": visible_answer,
+            "citations": visible_citations,
+            "status": status,
+        }

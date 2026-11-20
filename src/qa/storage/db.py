@@ -25,16 +25,6 @@ _SCHEMA = (
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS qa_review_queue (
-        question_id TEXT PRIMARY KEY,
-        payload JSONB NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending'
-            CHECK (status IN ('pending', 'approved', 'rejected')),
-        decision JSONB,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """,
-    """
     CREATE TABLE IF NOT EXISTS qa_audit_events (
         event_id BIGSERIAL PRIMARY KEY,
         event_type TEXT NOT NULL,
@@ -72,6 +62,31 @@ _SCHEMA = (
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         UNIQUE (session_id, message_index)
     )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS qa_review_requests (
+        question_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES qa_chat_sessions(session_id) ON DELETE CASCADE,
+        question_text TEXT NOT NULL,
+        draft_answer TEXT NOT NULL,
+        citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+        grounding_f1 DOUBLE PRECISION,
+        trigger_reason TEXT NOT NULL DEFAULT 'manual'
+            CHECK (trigger_reason IN ('manual', 'grounding_threshold')),
+        status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'approved', 'rejected')),
+        decision JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    ALTER TABLE qa_review_requests
+        ADD COLUMN IF NOT EXISTS grounding_f1 DOUBLE PRECISION
+    """,
+    """
+    ALTER TABLE qa_review_requests
+        ADD COLUMN IF NOT EXISTS trigger_reason TEXT NOT NULL DEFAULT 'manual'
     """,
 )
 

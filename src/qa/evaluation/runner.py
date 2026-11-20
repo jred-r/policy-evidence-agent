@@ -5,18 +5,14 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import uuid
 from pathlib import Path
 from typing import Any
 
 from ..data.ingest import validate_data
 from ..data.retrieve import PolicyRetriever
-from ..domain.schemas import DataSet, DraftedAnswer
+from ..domain.schemas import DataSet
 from ..llm.client import budget_count, load_config
-from ..storage.db import database_url
-from ..storage.review import ReviewStore
 from ..workflow.draft import draft_answers
-from ..workflow.graph import create_workflow
 from ..workflow.scoring import (
     answer_key_f1,
     citation_correctness,
@@ -31,7 +27,7 @@ def evaluate(
     retriever: PolicyRetriever | None = None,
     output_dir: Path = Path("results"),
 ) -> dict[str, Any]:
-    """Evaluate first drafts and durable retries, then write JSON and text results."""
+    """Evaluate one-pass answers, then write JSON and text results."""
     data = dataset or validate_data()
     search = retriever or PolicyRetriever()
     search.ingest(data.policies)
@@ -52,82 +48,28 @@ def evaluate(
 def _evaluate(
     data: DataSet, search: PolicyRetriever, output_dir: Path
 ) -> dict[str, Any]:
-    from langgraph.checkpoint.postgres import PostgresSaver
-
     before_budget = budget_count()
-    initial_answers = draft_answers(data.questions, search, batch_size=5)
+    drafted_answers = draft_answers(data.questions, search, batch_size=5)
     source_text = {
         passage.id: passage.text
         for document in data.policies
         for passage in document.passages
     }
     key_by_id = {entry.question_id: entry for entry in data.answer_key}
-    questions_by_id = {question.id: question for question in data.questions}
-    initial_by_id = {answer.question_id: answer for answer in initial_answers}
-    initial_scores = {
-        answer.question_id: grounding_f1(answer, source_text)
-        for answer in initial_answers
-    }
-    retry_questions = [
-        questions_by_id[question_id]
-        for question_id, score in initial_scores.items()
-        if score < 0.95
-    ]
-    retry_by_id = {
-        answer.question_id: answer
-        for answer in draft_answers(retry_questions, search, batch_size=5)
-    } if retry_questions else {}
-
-    attempts: dict[str, int] = {}
-
-    def choose_draft(question: Any, passages: Any) -> Any:
-        count = attempts.get(question.id, 0)
-        attempts[question.id] = count + 1
-        if count == 0:
-            return initial_by_id[question.id]
-        return retry_by_id[question.id]
-
-    with PostgresSaver.from_conn_string(database_url()) as saver:
-        saver.setup()
-        review_store = ReviewStore()
-        results = []
-        for question in data.questions:
-            workflow = create_workflow(
-                retriever=search,
-                review_store=review_store,
-                checkpointer=saver,
-                draft_function=choose_draft,
-            )
-            result = workflow.invoke(
-                {"question_id": question.id, "question": question.text},
-                config={"configurable": {"thread_id": f"eval-{uuid.uuid4()}"}},
-            )
-            final_raw = result.get("final_answer") or result.get("best_answer")
-            answer = initial_by_id[question.id]
-            if final_raw is not None:
-                answer = DraftedAnswer.model_validate(final_raw)
-            score = grounding_f1(answer, source_text)
-            key = key_by_id.get(question.id)
-            results.append(
-                {
-                    **answer.model_dump(),
-                    "first_attempt_grounding_f1": initial_scores[question.id],
-                    "grounding_f1": score,
-                    "answer_key_f1": token_f1(answer.answer, key.answer) if key else 0.0,
-                    "attempts": result.get("attempts", 1),
-                    "status": result.get("status", "unknown"),
-                }
-            )
-
-    answers = [
-        DraftedAnswer.model_validate(
-            {key: row[key] for key in ("question_id", "answer", "confidence", "citations")}
+    results = []
+    for answer in drafted_answers:
+        key = key_by_id.get(answer.question_id)
+        results.append(
+            {
+                **answer.model_dump(),
+                "grounding_f1": grounding_f1(answer, source_text),
+                "answer_key_f1": token_f1(answer.answer, key.answer) if key else 0.0,
+                "status": "answered" if answer.in_scope else "off_topic",
+            }
         )
-        for row in results
-    ]
+    answers = drafted_answers
     grounding_scores = [float(row["grounding_f1"]) for row in results]
-    first_passes = sum(score >= 0.95 for score in initial_scores.values())
-    escalated = sum(row["status"] == "review" for row in results)
+    out_of_scope = sum(not answer.in_scope for answer in answers)
     judge_scores: list[float] = []
     if os.getenv("QA_ENABLE_JUDGE", "").lower() in {"1", "true", "yes"}:
         config = load_config()
@@ -154,23 +96,12 @@ def _evaluate(
     live_requests = max(0, budget_count() - before_budget)
     metric_data = {
         "question_count": len(results),
-        "first_attempt_pass_rate": first_passes / len(results) if results else 0.0,
-        "f1_after_retries": answer_key_f1(answers, data.answer_key),
         "answer_key_f1": answer_key_f1(answers, data.answer_key),
         "citation_correctness": citation_correctness(answers, data.answer_key),
         "mean_grounding_f1": (
             sum(grounding_scores) / len(grounding_scores) if grounding_scores else 0.0
         ),
-        "escalated_percent": (
-            100 * escalated / len(results)
-            if results
-            else 0.0
-        ),
-        "retry_percent": (
-            100 * sum(row["attempts"] > 1 for row in results) / len(results)
-            if results
-            else 0.0
-        ),
+        "out_of_scope_percent": 100 * out_of_scope / len(results) if results else 0.0,
         "requests_per_answer": trace_events / len(results) if results else 0.0,
         "live_requests_per_answer": live_requests / len(results) if results else 0.0,
         "mean_judge_faithfulness": (
@@ -189,13 +120,10 @@ def _summary(metrics: dict[str, Any]) -> str:
     headers = ("Metric", "Value")
     rows = [
         ("Questions", str(metrics["question_count"])),
-        ("First-attempt pass rate", f"{metrics['first_attempt_pass_rate']:.3f}"),
         ("Answer-key F1", f"{metrics['answer_key_f1']:.3f}"),
-        ("F1 after retries", f"{metrics['f1_after_retries']:.3f}"),
         ("Mean grounding F1", f"{metrics['mean_grounding_f1']:.3f}"),
         ("Citation correctness", f"{metrics['citation_correctness']:.3f}"),
-        ("Escalated percent", f"{metrics['escalated_percent']:.1f}%"),
-        ("Retry percent", f"{metrics['retry_percent']:.1f}%"),
+        ("Out-of-scope percent", f"{metrics['out_of_scope_percent']:.1f}%"),
         ("Requests per answer", f"{metrics['requests_per_answer']:.2f}"),
     ]
     width = max(len(headers[0]), *(len(row[0]) for row in rows))

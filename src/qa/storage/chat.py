@@ -9,6 +9,7 @@ from psycopg.types.json import Jsonb
 
 from .audit import emit_event, insert_event
 from .db import connection
+from .review import PENDING_REVIEW_MESSAGE
 
 Role = Literal["user", "assistant"]
 
@@ -68,19 +69,10 @@ class ChatStore:
                 return None
             messages = conn.execute(
                 """
-                SELECT m.message_id, m.role, m.content,
-                    CASE
-                        WHEN m.metadata->>'status' = 'review'
-                            AND r.status IN ('approved', 'rejected')
-                        THEN jsonb_set(m.metadata, '{status}', to_jsonb(r.status), true)
-                        ELSE m.metadata
-                    END AS metadata,
-                    m.created_at
-                FROM qa_chat_messages AS m
-                LEFT JOIN qa_review_queue AS r
-                    ON r.question_id = m.metadata->>'question_id'
-                WHERE m.session_id = %s
-                ORDER BY m.message_index
+                SELECT message_id, role, content, metadata, created_at
+                FROM qa_chat_messages
+                WHERE session_id = %s
+                ORDER BY message_index
                 """,
                 (session_id,),
             ).fetchall()
@@ -107,10 +99,13 @@ class ChatStore:
         role: Role,
         content: str,
         metadata: dict[str, Any] | None = None,
+        review_request: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Append a user or assistant message and update session activity."""
+        if review_request is not None and role != "assistant":
+            raise ValueError("Only assistant messages can be sent for human review")
         message_id = str(uuid.uuid4())
-        audit_event = None
+        audit_events = []
         with connection() as conn:
             with conn.transaction():
                 session = conn.execute(
@@ -160,27 +155,63 @@ class ChatStore:
                     (title, session_id),
                 )
                 if role == "user" and metadata and metadata.get("question_id"):
-                    audit_event = insert_event(
-                        conn,
-                        "chat.message.received",
-                        session_id=session_id,
-                        question_id=str(metadata["question_id"]),
-                        details={"live_mode": bool(metadata.get("live_mode", False))},
+                    audit_events.append(
+                        insert_event(
+                            conn,
+                            "chat.message.received",
+                            session_id=session_id,
+                            question_id=str(metadata["question_id"]),
+                            details={"live_mode": bool(metadata.get("live_mode", False))},
+                        )
                     )
                 elif role == "assistant" and metadata and metadata.get("question_id"):
-                    audit_event = insert_event(
-                        conn,
-                        "chat.message.completed",
-                        session_id=session_id,
-                        question_id=str(metadata["question_id"]),
-                        details={
-                            "status": metadata.get("status", "unknown"),
-                            "live_mode": bool(metadata.get("live_mode", False)),
-                            "confidence": metadata.get("confidence"),
-                        },
+                    audit_events.append(
+                        insert_event(
+                            conn,
+                            "chat.message.completed",
+                            session_id=session_id,
+                            question_id=str(metadata["question_id"]),
+                            details={
+                                "status": metadata.get("status", "unknown"),
+                                "live_mode": bool(metadata.get("live_mode", False)),
+                            },
+                        )
                     )
-        if audit_event:
-            emit_event(audit_event)
+                if review_request is not None:
+                    question_id = (metadata or {}).get("question_id")
+                    if not question_id:
+                        raise ValueError("A review request requires a question ID")
+                    conn.execute(
+                        """
+                        INSERT INTO qa_review_requests
+                            (question_id, session_id, question_text, draft_answer, citations,
+                             grounding_f1, trigger_reason)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            str(question_id),
+                            session_id,
+                            review_request["question"],
+                            review_request["answer"],
+                            Jsonb(review_request.get("citations", [])),
+                            review_request.get("grounding_f1"),
+                            review_request["trigger_reason"],
+                        ),
+                    )
+                    audit_events.append(
+                        insert_event(
+                            conn,
+                            "review.requested",
+                            session_id=session_id,
+                            question_id=str(question_id),
+                            details={
+                                "grounding_f1": review_request.get("grounding_f1"),
+                                "trigger_reason": review_request["trigger_reason"],
+                            },
+                        )
+                    )
+        for event in audit_events:
+            emit_event(event)
         return {
             "message_id": message_id,
             "role": role,
@@ -188,6 +219,43 @@ class ChatStore:
             "metadata": metadata or {},
             "created_at": row["created_at"],
         }
+
+    def create_review_session(
+        self,
+        question_id: str,
+        question: str,
+        answer: str,
+        citations: list[dict[str, Any]],
+        grounding_f1: float | None,
+        trigger_reason: str,
+    ) -> str:
+        """Create a chat thread for a non-chat answer awaiting human approval."""
+        session_id = self.create_session()["session_id"]
+        self.add_message(
+            session_id,
+            "user",
+            question,
+            {"question_id": question_id},
+        )
+        self.add_message(
+            session_id,
+            "assistant",
+            PENDING_REVIEW_MESSAGE,
+            {
+                "status": "pending_review",
+                "question_id": question_id,
+                "citations": [],
+                "human_review_status": "pending",
+            },
+            review_request={
+                "question": question,
+                "answer": answer,
+                "citations": citations,
+                "grounding_f1": grounding_f1,
+                "trigger_reason": trigger_reason,
+            },
+        )
+        return session_id
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session and its messages while preserving a deletion event."""

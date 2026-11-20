@@ -1,4 +1,4 @@
-"""Small A2A-style HTTP surface for the answer workflow."""
+"""Small A2A-style HTTP surface for policy answers."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..storage.audit import AuditStore
 from ..storage.chat import ChatStore
 from ..storage.db import connection
-from ..storage.review import ReviewStore
-from ..workflow.graph import run_workflow
+from ..storage.review import PENDING_REVIEW_MESSAGE, ReviewStore
+from ..workflow.answer import answer_question
 
 app = FastAPI(title="Policy Evidence Agent", version="0.1.0")
 _UI_FILE = Path(__file__).parent / "static" / "index.html"
@@ -48,10 +48,11 @@ class ChatMessageRequest(BaseModel):
 
     content: str = Field(min_length=1, max_length=4000)
     live_mode: bool = False
+    require_human_review: bool = False
 
 
 class ReviewDecisionRequest(BaseModel):
-    """Human decision for one pending review item."""
+    """Human decision for one pending review request."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -114,18 +115,30 @@ def create_task(request: TaskRequest) -> dict[str, Any]:
     task_id = str(uuid.uuid4())
     question_id = (request.question_id or "").strip() or task_id
     try:
-        result = run_workflow(
-            question_id,
-            request.question,
-            thread_id=task_id,
-        )
+        result = answer_question(question_id, request.question)
     except (ValueError, LookupError) as error:
-        raise _workflow_error(error) from error
+        raise _answer_error(error) from error
+    status = str(result.get("status", "unknown"))
+    review_session_id = None
+    if result.get("human_review_required"):
+        draft = result.get("review_draft")
+        if not draft:
+            raise RuntimeError("Answer requires review but its draft is missing")
+        review_session_id = ChatStore().create_review_session(
+            task_id,
+            request.question,
+            str(draft["answer"]),
+            draft.get("citations", []),
+            result.get("grounding_f1"),
+            "grounding_threshold",
+        )
+        status = "pending_review"
     return {
         "id": task_id,
-        "status": result.get("status", "unknown"),
+        "status": status,
         "result": result.get("final_answer"),
         "question_id": question_id,
+        "review_session_id": review_session_id,
     }
 
 
@@ -158,24 +171,37 @@ def delete_session(session_id: UUID) -> Response:
     return Response(status_code=204)
 
 
-@app.get("/reviews")
-def list_reviews() -> dict[str, Any]:
-    """List pending human-review items."""
-    reviews = ReviewStore().list_pending()
-    return {"reviews": reviews, "pending_count": len(reviews)}
+@app.get("/activity")
+def list_activity(limit: int = Query(default=100, ge=1, le=200)) -> dict[str, Any]:
+    """Return recent operational audit events."""
+    return {"events": AuditStore().list_recent(limit)}
 
 
-@app.post("/reviews/{question_id}/decision")
-def decide_review(
+@app.get("/review-requests")
+def list_review_requests() -> dict[str, Any]:
+    """List answers explicitly submitted for human approval."""
+    requests = ReviewStore().list_pending()
+    return {"requests": requests, "pending_count": len(requests)}
+
+
+@app.post("/review-requests/{question_id}/decision")
+def decide_review_request(
     question_id: str,
     request: ReviewDecisionRequest,
 ) -> dict[str, Any]:
-    """Approve or reject a pending item, optionally editing its answer."""
-    edited_answer = request.edited_answer
-    if edited_answer is not None:
-        edited_answer = edited_answer.strip()
-        if not edited_answer:
-            raise HTTPException(status_code=422, detail="Edited answer cannot be blank")
+    """Approve or reject a pending answer, optionally editing its wording."""
+    if not request.approved and request.edited_answer is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="An edited answer can only be saved when approving",
+        )
+    edited_answer = (
+        request.edited_answer.strip()
+        if request.edited_answer is not None
+        else None
+    )
+    if edited_answer == "":
+        raise HTTPException(status_code=422, detail="Edited answer cannot be blank")
     try:
         return ReviewStore().decide(
             question_id,
@@ -186,12 +212,6 @@ def decide_review(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-
-
-@app.get("/activity")
-def list_activity(limit: int = Query(default=100, ge=1, le=200)) -> dict[str, Any]:
-    """Return recent operational audit events."""
-    return {"events": AuditStore().list_recent(limit)}
 
 
 @app.post("/sessions/{session_id}/messages")
@@ -217,10 +237,9 @@ def create_chat_message(
         {"question_id": question_id, "live_mode": request.live_mode},
     )
     try:
-        result = run_workflow(
+        result = answer_question(
             question_id,
             question,
-            thread_id=str(uuid.uuid4()),
             conversation_history=history,
             llm_mode="record" if request.live_mode else "replay",
         )
@@ -232,24 +251,48 @@ def create_chat_message(
             details={"error_type": type(error).__name__},
         )
         logger.warning(
-            "workflow_failed session_id=%s question_id=%s error_type=%s",
+            "chat_answer_failed session_id=%s question_id=%s error_type=%s",
             selected_session,
             question_id,
             event["details"]["error_type"],
         )
-        raise _workflow_error(error) from error
+        raise _answer_error(error) from error
 
     status = str(result.get("status", "unknown"))
     answer = result.get("final_answer") or result.get("best_answer")
     if answer:
-        content = str(answer["answer"])
+        grounding_score = result.get("grounding_f1")
+        auto_review_required = bool(result.get("human_review_required", False))
+        review_required = request.require_human_review or auto_review_required
+        review_draft = result.get("review_draft") if auto_review_required else answer
+        if review_required and not review_draft:
+            raise RuntimeError("Answer requires review but its draft is missing")
+        draft_answer = str(review_draft["answer"]) if review_draft else ""
+        content = draft_answer
         metadata = {
             "status": status,
             "question_id": question_id,
-            "confidence": answer.get("confidence"),
             "citations": answer.get("citations", []),
             "live_mode": request.live_mode,
         }
+        review_request = None
+        response_status = status
+        if review_required:
+            response_status = "pending_review"
+            trigger_reason = (
+                "grounding_threshold" if auto_review_required else "manual"
+            )
+            content = PENDING_REVIEW_MESSAGE
+            metadata["status"] = response_status
+            metadata["human_review_status"] = "pending"
+            metadata["citations"] = []
+            review_request = {
+                "question": question,
+                "answer": draft_answer,
+                "citations": review_draft.get("citations", []),
+                "grounding_f1": grounding_score,
+                "trigger_reason": trigger_reason,
+            }
     else:
         content = "I could not produce an evidence-grounded answer."
         metadata = {
@@ -257,16 +300,25 @@ def create_chat_message(
             "question_id": question_id,
             "live_mode": request.live_mode,
         }
-    message = store.add_message(selected_session, "assistant", content, metadata)
+        review_request = None
+        response_status = status
+    message = store.add_message(
+        selected_session,
+        "assistant",
+        content,
+        metadata,
+        review_request=review_request,
+    )
     return {
         "session_id": selected_session,
         "question_id": question_id,
-        "status": status,
+        "status": response_status,
+        "human_review_status": metadata.get("human_review_status"),
         "message": message,
     }
 
 
-def _workflow_error(error: ValueError | LookupError) -> HTTPException:
+def _answer_error(error: ValueError | LookupError) -> HTTPException:
     if isinstance(error, LookupError) and str(error).startswith(
         "No recorded model response for key "
     ):

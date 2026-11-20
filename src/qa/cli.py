@@ -1,8 +1,9 @@
-"""Command-line tools for corpus validation, retrieval, evaluation, and review."""
+"""Command-line tools for corpus validation, retrieval, evaluation, and answers."""
 
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 
 import typer
@@ -10,12 +11,10 @@ import typer
 from .data.ingest import build_retrieval_baseline, validate_data
 from .data.retrieve import PolicyRetriever
 from .evaluation.runner import evaluate
-from .storage.review import ReviewStore
-from .workflow.graph import run_workflow
+from .storage.chat import ChatStore
+from .workflow.answer import answer_question
 
 app = typer.Typer(no_args_is_help=True)
-review_app = typer.Typer(no_args_is_help=True)
-app.add_typer(review_app, name="review")
 DATA_PATH_OPTION = typer.Option(None, "--path", help="Corpus directory")
 OUTPUT_PATH_OPTION = typer.Option(Path("results"), "--output")
 
@@ -42,16 +41,25 @@ def ingest(k: int = typer.Option(5, min=1)) -> None:
 
 
 @app.command()
-def answer(question_id: str) -> None:
-    """Answer one question from the validated corpus."""
-    dataset = validate_data()
-    question = next(
-        (item for item in dataset.questions if item.id == question_id), None
-    )
-    if question is None:
-        raise typer.BadParameter(f"Unknown question ID: {question_id}")
-    result = run_workflow(question.id, question.text, thread_id=f"cli-{question.id}")
-    typer.echo(json.dumps(result, indent=2, default=str))
+def answer(question: str) -> None:
+    """Answer one policy question."""
+    result = answer_question(str(uuid.uuid4()), question)
+    output = dict(result)
+    if result.get("human_review_required"):
+        draft = result.get("review_draft")
+        if not draft:
+            raise RuntimeError("Answer requires review but its draft is missing")
+        output["review_session_id"] = ChatStore().create_review_session(
+            str(result["question_id"]),
+            question,
+            str(draft["answer"]),
+            draft.get("citations", []),
+            result.get("grounding_f1"),
+            "grounding_threshold",
+        )
+        output["status"] = "pending_review"
+    output.pop("review_draft", None)
+    typer.echo(json.dumps(output, indent=2, default=str))
 
 
 @app.command()
@@ -62,29 +70,6 @@ def eval(output: Path = OUTPUT_PATH_OPTION) -> None:
         f"Evaluated {metrics['question_count']} answers; "
         f"answer-key F1={metrics['answer_key_f1']:.3f}"
     )
-
-
-@review_app.command("list")
-def list_review_queue() -> None:
-    """List pending human-review items."""
-    typer.echo(json.dumps(ReviewStore().list_pending(), indent=2))
-
-
-@review_app.command("approve")
-def approve(
-    question_id: str,
-    edited_answer: str | None = typer.Option(None, "--edit"),
-) -> None:
-    """Approve a queued answer, optionally with an edited response."""
-    result = ReviewStore().decide(question_id, approved=True, edited_answer=edited_answer)
-    typer.echo(json.dumps(result, indent=2))
-
-
-@review_app.command("reject")
-def reject(question_id: str) -> None:
-    """Reject a queued answer."""
-    result = ReviewStore().decide(question_id, approved=False)
-    typer.echo(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

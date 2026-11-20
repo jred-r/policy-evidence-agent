@@ -57,12 +57,13 @@ class Citation(StrictModel):
 
 
 class DraftedAnswer(StrictModel):
-    """Structured model output for one question."""
+    """Structured model output for one conversational turn."""
 
     question_id: str
     answer: str
-    confidence: float = Field(ge=0, le=1)
-    citations: list[Citation] = Field(min_length=1)
+    in_scope: bool
+    policy_related: bool
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class DataSet(StrictModel):

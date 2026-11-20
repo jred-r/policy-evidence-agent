@@ -179,7 +179,8 @@ def test_faithfulness_judge_uses_a_different_configured_model(
     answer = DraftedAnswer(
         question_id="Q1",
         answer="MFA is required.",
-        confidence=0.9,
+        in_scope=True,
+        policy_related=True,
         citations=[Citation(passage_id="P1")],
     )
 
@@ -213,7 +214,8 @@ def test_native_tool_response_validates_with_pydantic(
     raw = DraftedAnswer(
         question_id="Q1",
         answer="Access is reviewed.",
-        confidence=0.8,
+        in_scope=True,
+        policy_related=True,
         citations=[Citation(passage_id="P1")],
     ).model_dump_json()
     response = {
@@ -237,7 +239,8 @@ def test_no_tool_support_uses_json_fallback(monkeypatch: pytest.MonkeyPatch) -> 
     raw = DraftedAnswer(
         question_id="Q1",
         answer="Access is reviewed.",
-        confidence=0.8,
+        in_scope=True,
+        policy_related=True,
         citations=[Citation(passage_id="P1")],
     ).model_dump_json()
     calls = 0
@@ -263,7 +266,8 @@ def test_invalid_tool_json_gets_one_repair_retry(
     valid = DraftedAnswer(
         question_id="Q1",
         answer="Access is reviewed.",
-        confidence=0.8,
+        in_scope=True,
+        policy_related=True,
         citations=[Citation(passage_id="P1")],
     ).model_dump_json()
     responses = iter([_response("{not-json"), _response(valid)])

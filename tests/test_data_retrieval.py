@@ -92,7 +92,8 @@ def test_grounding_f1_uses_only_cited_passages() -> None:
     answer = DraftedAnswer(
         question_id="Q1",
         answer="Admin access requires MFA.",
-        confidence=0.9,
+        in_scope=True,
+        policy_related=True,
         citations=[Citation(passage_id="P2")],
     )
 

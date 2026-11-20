@@ -1,38 +1,37 @@
-"""MCP tools for answering and reviewing policy questions."""
+"""MCP tool for answering policy questions."""
 
 from __future__ import annotations
 
+import uuid
+
 from mcp.server.fastmcp import FastMCP
 
-from ..storage.review import ReviewStore
-from ..workflow.graph import run_workflow
+from ..storage.chat import ChatStore
+from ..workflow.answer import answer_question as answer_with_policy
 
 mcp = FastMCP("policy-evidence-agent")
 
 
 @mcp.tool()
-def answer_question(question_id: str, question: str) -> dict[str, object]:
-    """Answer one security assessment question with policy citations."""
-    result = run_workflow(
-        question_id,
-        question,
-        thread_id=f"mcp-{question_id}",
-    )
-    return dict(result)
-
-
-@mcp.tool()
-def list_review_queue() -> list[dict[str, object]]:
-    """List answers waiting for human review."""
-    return ReviewStore().list_pending()
-
-
-@mcp.tool()
-def approve_answer(
-    question_id: str, approved: bool, edited_answer: str | None = None
-) -> dict[str, object]:
-    """Approve, reject, or edit a queued answer."""
-    return ReviewStore().decide(question_id, approved, edited_answer)
+def answer_question(question: str) -> dict[str, object]:
+    """Answer one policy question with citations."""
+    result = answer_with_policy(str(uuid.uuid4()), question)
+    public_result = dict(result)
+    if result.get("human_review_required"):
+        draft = result.get("review_draft")
+        if not draft:
+            raise RuntimeError("Answer requires review but its draft is missing")
+        public_result["review_session_id"] = ChatStore().create_review_session(
+            str(result["question_id"]),
+            question,
+            str(draft["answer"]),
+            draft.get("citations", []),
+            result.get("grounding_f1"),
+            "grounding_threshold",
+        )
+        public_result["status"] = "pending_review"
+    public_result.pop("review_draft", None)
+    return public_result
 
 
 def main() -> None:

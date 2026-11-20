@@ -1,1 +1,1 @@
-"""Answer drafting, scoring, and review workflows."""
+"""Policy-grounded answer drafting and evaluation."""

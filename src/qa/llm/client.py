@@ -49,7 +49,7 @@ _clock: Callable[[], datetime] = _system_clock
 
 @contextmanager
 def override_llm_mode(mode: Literal["record", "replay"]) -> Iterator[None]:
-    """Temporarily select a mode for one workflow draft."""
+    """Temporarily select a mode for one answer request."""
     token = _mode_override.set(mode)
     try:
         yield
