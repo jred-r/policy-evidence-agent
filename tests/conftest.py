@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import pytest
 from dotenv import load_dotenv
 
-from qa.db import connection
+from qa.storage.db import connection
 
 
 @pytest.fixture(autouse=True)

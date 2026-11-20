@@ -8,8 +8,8 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict
 
-from .db import connection
-from .graph import run_workflow
+from ..storage.db import connection
+from ..workflow.graph import run_workflow
 
 app = FastAPI(title="Policy Evidence Agent", version="0.1.0")
 

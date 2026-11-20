@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from qa import evaluation
-from qa.retrieve import RetrievedPassage
-from qa.schemas import Citation, DataSet, DraftedAnswer, load_data
+from qa.data.retrieve import RetrievedPassage
+from qa.domain.schemas import Citation, DataSet, DraftedAnswer, load_data
+from qa.evaluation import runner as evaluation
 
 
 class FixtureRetriever:

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from qa.ingest import validate_data
-from qa.retrieve import PolicyRetriever, RetrievedPassage
-from qa.schemas import Citation, DraftedAnswer
-from qa.scoring import grounding_f1, token_f1
+from qa.data.ingest import validate_data
+from qa.data.retrieve import PolicyRetriever, RetrievedPassage
+from qa.domain.schemas import Citation, DraftedAnswer
+from qa.workflow.scoring import grounding_f1, token_f1
 
 
 class FakeCollection:

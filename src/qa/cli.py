@@ -7,11 +7,11 @@ from pathlib import Path
 
 import typer
 
-from .evaluation import evaluate
-from .graph import run_workflow
-from .ingest import build_retrieval_baseline, validate_data
-from .retrieve import PolicyRetriever
-from .review import ReviewStore
+from .data.ingest import build_retrieval_baseline, validate_data
+from .data.retrieve import PolicyRetriever
+from .evaluation.runner import evaluate
+from .storage.review import ReviewStore
+from .workflow.graph import run_workflow
 
 app = typer.Typer(no_args_is_help=True)
 review_app = typer.Typer(no_args_is_help=True)

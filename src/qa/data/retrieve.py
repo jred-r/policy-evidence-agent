@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from .schemas import PolicyDocument
+from ..domain.schemas import PolicyDocument
 
 
 class Collection(Protocol):

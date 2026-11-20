@@ -14,4 +14,4 @@ RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:${PATH}"
 EXPOSE 8000
 
-CMD ["uvicorn", "qa.a2a_app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "qa.interfaces.a2a_app:app", "--host", "0.0.0.0", "--port", "8000"]

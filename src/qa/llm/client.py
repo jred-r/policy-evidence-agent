@@ -16,7 +16,7 @@ import yaml
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ValidationError
 
-from .db import connection
+from ..storage.db import connection
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)

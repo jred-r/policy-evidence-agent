@@ -5,10 +5,10 @@ import uuid
 
 from langgraph.checkpoint.postgres import PostgresSaver
 
-from qa.graph import create_workflow
-from qa.retrieve import RetrievedPassage
-from qa.review import ReviewStore
-from qa.schemas import Citation, DraftedAnswer, Question
+from qa.data.retrieve import RetrievedPassage
+from qa.domain.schemas import Citation, DraftedAnswer, Question
+from qa.storage.review import ReviewStore
+from qa.workflow.graph import create_workflow
 
 
 class FakeRetriever:

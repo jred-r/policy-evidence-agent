@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from .graph import run_workflow
-from .review import ReviewStore
+from ..storage.review import ReviewStore
+from ..workflow.graph import run_workflow
 
 mcp = FastMCP("policy-evidence-agent")
 

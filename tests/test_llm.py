@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-import qa.llm as llm
-from qa.schemas import Citation, DraftedAnswer
-from qa.scoring import faithfulness_judge
+import qa.llm.client as llm
+from qa.domain.schemas import Citation, DraftedAnswer
+from qa.workflow.scoring import faithfulness_judge
 
 
 class FakeRouter:

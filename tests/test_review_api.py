@@ -4,8 +4,8 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from qa import a2a_app, mcp_server
-from qa.review import ReviewStore
+from qa.interfaces import a2a_app, mcp_server
+from qa.storage.review import ReviewStore
 
 
 def test_review_decision_persists_edited_final_answer() -> None:

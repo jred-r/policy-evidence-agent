@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ..domain.schemas import DataSet, load_data
 from .retrieve import PolicyRetriever, recall_at_k
-from .schemas import DataSet, load_data
 
 
 def data_dir() -> Path:

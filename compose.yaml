@@ -14,7 +14,7 @@ services:
     restart: "no"
   mcp:
     build: .
-    command: ["python", "-m", "qa.mcp_server"]
+    command: ["python", "-m", "qa.interfaces.mcp_server"]
     profiles: ["mcp"]
     environment:
       DATABASE_URL: postgresql://litellm_admin:${DB_PASSWORD:?Set DB_PASSWORD in proxy .env}@litellm-db:5432/litellm_db?sslmode=disable

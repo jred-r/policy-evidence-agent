@@ -6,9 +6,9 @@ import json
 
 from pydantic import Field
 
-from .llm import call_with_tools
-from .retrieve import PolicyRetriever
-from .schemas import DraftedAnswer, Question, StrictModel
+from ..data.retrieve import PolicyRetriever
+from ..domain.schemas import DraftedAnswer, Question, StrictModel
+from ..llm.client import call_with_tools
 
 
 class DraftBatch(StrictModel):

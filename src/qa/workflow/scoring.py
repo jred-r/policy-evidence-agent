@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from .schemas import AnswerKeyEntry, Citation, DraftedAnswer
+from ..domain.schemas import AnswerKeyEntry, Citation, DraftedAnswer
 
 
 def token_f1(answer: str, evidence: str) -> float:
@@ -77,7 +77,7 @@ def faithfulness_judge(
     """Ask the configured judge model to score evidence faithfulness from 0 to 1."""
     import json
 
-    from .llm import complete, load_config
+    from ..llm.client import complete, load_config
 
     config = load_config()
     selected_judge = judge_model or config.get("judge_model")
