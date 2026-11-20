@@ -14,8 +14,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
 The script starts PostgreSQL, LiteLLM, the gateway, and the agent, then ingests
-the policy corpus. Open http://127.0.0.1:8001/ for the browser UI; `/health`
-checks the API and PostgreSQL connection. Set `LLM_MODE=record` in the proxy
+the policy corpus. Open http://127.0.0.1:8001/ for the chat UI. Sessions and
+messages persist in PostgreSQL and can be reopened from the sidebar; `/health`
+checks the API and database connection. Set `LLM_MODE=record` in the proxy
 environment file before running the script to make model calls and save
 responses. The default, `replay`, requires responses already stored in
 PostgreSQL.
