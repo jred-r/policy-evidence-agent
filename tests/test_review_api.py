@@ -30,11 +30,14 @@ def test_agent_card_and_task_endpoint(monkeypatch) -> None:
     )
     client = TestClient(a2a_app.app)
 
+    home = client.get("/")
     card = client.get("/.well-known/agent.json")
     task = client.post(
         "/tasks", json={"question_id": "Q1", "question": "Can you cite evidence?"}
     )
 
+    assert home.status_code == 200
+    assert 'id="question-form"' in home.text
     assert card.status_code == 200
     assert card.json()["name"] == "Policy Evidence Agent"
     health = client.get("/health")

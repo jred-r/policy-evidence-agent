@@ -20,5 +20,6 @@ def isolate_postgres_test_data(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", dsn)
     with connection(dsn) as conn:
         conn.execute(
-            "TRUNCATE qa_llm_responses, qa_llm_daily_budget, qa_review_queue"
+            "TRUNCATE qa_llm_responses, qa_llm_daily_budget, "
+            "qa_review_queue, qa_policy_passages"
         )

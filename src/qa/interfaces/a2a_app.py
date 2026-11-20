@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 from ..storage.db import connection
 from ..workflow.graph import run_workflow
 
 app = FastAPI(title="Policy Evidence Agent", version="0.1.0")
+_UI_FILE = Path(__file__).parent / "static" / "index.html"
 
 
 class TaskRequest(BaseModel):
@@ -21,6 +24,12 @@ class TaskRequest(BaseModel):
 
     question_id: str
     question: str
+
+
+@app.get("/", include_in_schema=False)
+def home() -> FileResponse:
+    """Serve the browser interface."""
+    return FileResponse(_UI_FILE)
 
 
 @app.get("/health")

@@ -34,6 +34,15 @@ _SCHEMA = (
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS qa_policy_passages (
+        passage_id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL,
+        passage_text TEXT NOT NULL,
+        embedding JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
 )
 
 

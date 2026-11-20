@@ -4,7 +4,7 @@ from pathlib import Path
 
 from qa.data.ingest import validate_data
 from qa.data.retrieve import PolicyRetriever, RetrievedPassage
-from qa.domain.schemas import Citation, DraftedAnswer
+from qa.domain.schemas import Citation, DraftedAnswer, PolicyDocument, PolicyPassage
 from qa.workflow.scoring import grounding_f1, token_f1
 
 
@@ -41,7 +41,7 @@ def test_synthetic_dataset_has_40_valid_question_answer_pairs() -> None:
     }
 
 
-def test_local_retrieval_returns_chroma_shaped_citations() -> None:
+def test_injected_collection_retrieval_returns_citations() -> None:
     dataset = validate_data(Path("data"))
     collection = FakeCollection()
     retriever = PolicyRetriever(
@@ -60,6 +60,32 @@ def test_local_retrieval_returns_chroma_shaped_citations() -> None:
             distance=0.1,
         )
     ]
+
+
+def test_default_retriever_persists_and_ranks_passages_in_postgres() -> None:
+    vectors = {
+        "near evidence": [1.0, 0.0],
+        "far evidence": [0.0, 1.0],
+        "query": [0.8, 0.2],
+    }
+    retriever = PolicyRetriever(embedder=lambda texts: [vectors[text] for text in texts])
+    document = PolicyDocument(
+        id="policy",
+        title="Policy",
+        source="synthetic",
+        license="CC0-1.0",
+        passages=[
+            PolicyPassage(id="P-near", document_id="policy", text="near evidence"),
+            PolicyPassage(id="P-far", document_id="policy", text="far evidence"),
+        ],
+    )
+    retriever.ingest([document])
+
+    results = PolicyRetriever(
+        embedder=lambda texts: [vectors[text] for text in texts]
+    ).retrieve("query", k=2)
+
+    assert [item.passage_id for item in results] == ["P-near", "P-far"]
 
 
 def test_grounding_f1_uses_only_cited_passages() -> None:

@@ -5,18 +5,110 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from math import fsum, sqrt
 from pathlib import Path
 from typing import Protocol
 
+from psycopg.types.json import Jsonb
+
 from ..domain.schemas import PolicyDocument
+from ..storage.db import connection
 
 
 class Collection(Protocol):
-    """Chroma collection operations used by the retriever."""
+    """Passage storage operations used by the retriever."""
 
     def upsert(self, **kwargs: object) -> None: ...
 
     def query(self, **kwargs: object) -> dict[str, object]: ...
+
+
+class _PostgresCollection:
+    """PostgreSQL-backed passage store with cosine-distance ranking."""
+
+    def upsert(
+        self,
+        *,
+        ids: list[str],
+        documents: list[str],
+        metadatas: list[dict[str, str]],
+        embeddings: list[list[float]],
+    ) -> None:
+        if not (len(ids) == len(documents) == len(metadatas) == len(embeddings)):
+            raise ValueError("Passage IDs, documents, metadata, and embeddings must align")
+        rows = [
+            (
+                ids[index],
+                metadatas[index]["document_id"],
+                documents[index],
+                Jsonb(embeddings[index]),
+            )
+            for index in range(len(ids))
+        ]
+        with connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(
+                    """
+                    INSERT INTO qa_policy_passages
+                        (passage_id, document_id, passage_text, embedding)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (passage_id) DO UPDATE SET
+                        document_id = EXCLUDED.document_id,
+                        passage_text = EXCLUDED.passage_text,
+                        embedding = EXCLUDED.embedding,
+                        updated_at = now()
+                    """,
+                    rows,
+                )
+
+    def query(
+        self,
+        *,
+        query_embeddings: list[list[float]],
+        n_results: int,
+        include: list[str],
+    ) -> dict[str, object]:
+        if len(query_embeddings) != 1:
+            raise ValueError("Exactly one query embedding is required")
+        query_vector = query_embeddings[0]
+        if not query_vector or n_results < 1:
+            raise ValueError("A non-empty query embedding and positive result count are required")
+
+        with connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT passage_id, document_id, passage_text, embedding
+                FROM qa_policy_passages
+                """
+            ).fetchall()
+
+        query_norm = sqrt(fsum(value * value for value in query_vector))
+        if query_norm == 0:
+            raise ValueError("Query embedding has zero length")
+        ranked: list[tuple[float, dict[str, object]]] = []
+        for row in rows:
+            vector = row["embedding"]
+            if len(vector) != len(query_vector):
+                raise ValueError(
+                    "Stored passage embeddings do not match the query embedding dimensions"
+                )
+            vector_norm = sqrt(fsum(value * value for value in vector))
+            if vector_norm == 0:
+                raise ValueError(f"Passage {row['passage_id']} has a zero-length embedding")
+            similarity = fsum(
+                left * right for left, right in zip(query_vector, vector, strict=True)
+            ) / (query_norm * vector_norm)
+            ranked.append((1.0 - similarity, row))
+        ranked.sort(key=lambda item: item[0])
+        selected = ranked[:n_results]
+        return {
+            "ids": [[row["passage_id"] for _distance, row in selected]],
+            "documents": [[row["passage_text"] for _distance, row in selected]],
+            "metadatas": [
+                [{"document_id": row["document_id"]} for _distance, row in selected]
+            ],
+            "distances": [[distance for distance, _row in selected]],
+        }
 
 
 @dataclass(frozen=True)
@@ -34,7 +126,6 @@ class PolicyRetriever:
 
     def __init__(
         self,
-        persist_dir: Path | None = None,
         embedding_model: str | None = None,
         embedder: Callable[[list[str]], list[list[float]]] | None = None,
         collection: Collection | None = None,
@@ -42,16 +133,7 @@ class PolicyRetriever:
         self._embedder = embedder or _sentence_embedder(
             embedding_model or os.getenv("QA_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
         )
-        if collection is None:
-            import chromadb
-
-            client = chromadb.PersistentClient(
-                path=str(persist_dir or os.getenv("QA_CHROMA_PATH", ".qa/chroma"))
-            )
-            collection = client.get_or_create_collection(
-                name="policy_passages", metadata={"hnsw:space": "cosine"}
-            )
-        self._collection = collection
+        self._collection = collection if collection is not None else _PostgresCollection()
 
     def ingest(self, documents: list[PolicyDocument]) -> int:
         """Upsert all policy passages and return their count."""

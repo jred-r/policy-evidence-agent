@@ -6,11 +6,8 @@ services:
       LITELLM_API_BASE: http://litellm-proxy:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY in proxy .env}
       LLM_MODE: ${LLM_MODE:-replay}
-      QA_CHROMA_PATH: /app/.qa/chroma
     ports:
       - "127.0.0.1:8001:8000"
-    volumes:
-      - policy_evidence_chroma:/app/.qa/chroma
     restart: "no"
   mcp:
     build: .
@@ -21,13 +18,7 @@ services:
       LITELLM_API_BASE: http://litellm-proxy:4000
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY in proxy .env}
       LLM_MODE: ${LLM_MODE:-replay}
-      QA_CHROMA_PATH: /app/.qa/chroma
-    volumes:
-      - policy_evidence_chroma:/app/.qa/chroma
     restart: "no"
-
-volumes:
-  policy_evidence_chroma:
 
 networks:
   default:

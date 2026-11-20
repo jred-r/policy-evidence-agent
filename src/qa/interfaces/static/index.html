@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Policy Evidence Agent</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", sans-serif;
+        color: #172033;
+        background: #f3f6fb;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: start center;
+      }
+
+      main {
+        width: min(760px, calc(100% - 32px));
+        margin: 48px 0;
+      }
+
+      .card {
+        padding: 28px;
+        border: 1px solid #dce3ee;
+        border-radius: 16px;
+        background: #fff;
+        box-shadow: 0 12px 32px #17203312;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 1.8rem;
+      }
+
+      p {
+        color: #526078;
+        line-height: 1.5;
+      }
+
+      label {
+        display: block;
+        margin: 18px 0 6px;
+        font-weight: 600;
+      }
+
+      input,
+      textarea {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 11px 12px;
+        border: 1px solid #c8d1df;
+        border-radius: 8px;
+        font: inherit;
+      }
+
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+
+      button {
+        margin-top: 18px;
+        padding: 11px 18px;
+        border: 0;
+        border-radius: 8px;
+        color: white;
+        background: #2458c6;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+
+      #result {
+        margin-top: 22px;
+      }
+
+      #answer {
+        white-space: pre-wrap;
+      }
+
+      .citation {
+        margin: 10px 0;
+        padding: 12px;
+        border-left: 3px solid #75a2ff;
+        background: #f4f7fc;
+      }
+
+      .error {
+        color: #a32132;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="card">
+        <h1>Policy Evidence Agent</h1>
+        <p>Ask a security assessment question. Answers use policy evidence and include citations.</p>
+        <form id="question-form">
+          <label for="question-id">Question ID</label>
+          <input id="question-id" name="question_id" value="Q001" required>
+          <label for="question">Question</label>
+          <textarea id="question" name="question" required>Are individual user accounts required for all workforce members?</textarea>
+          <button id="submit" type="submit">Get evidence-based answer</button>
+        </form>
+        <section id="result" aria-live="polite" hidden>
+          <h2 id="status"></h2>
+          <p id="answer"></p>
+          <p id="confidence"></p>
+          <h3 id="citation-heading" hidden>Evidence</h3>
+          <div id="citations"></div>
+        </section>
+      </section>
+    </main>
+    <script>
+      const form = document.querySelector("#question-form");
+      const button = document.querySelector("#submit");
+      const result = document.querySelector("#result");
+      const status = document.querySelector("#status");
+      const answer = document.querySelector("#answer");
+      const confidence = document.querySelector("#confidence");
+      const citationHeading = document.querySelector("#citation-heading");
+      const citations = document.querySelector("#citations");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        button.disabled = true;
+        button.textContent = "Working…";
+        result.hidden = false;
+        status.textContent = "Submitting question";
+        status.className = "";
+        answer.textContent = "";
+        confidence.textContent = "";
+        citations.replaceChildren();
+        citationHeading.hidden = true;
+
+        try {
+          const response = await fetch("/tasks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              question_id: form.elements.question_id.value.trim(),
+              question: form.elements.question.value.trim(),
+            }),
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || `Request failed (${response.status})`);
+          }
+
+          status.textContent = payload.status === "review"
+            ? "Human review needed"
+            : "Answer ready";
+          const drafted = payload.result;
+          if (!drafted) {
+            answer.textContent = "No final answer was produced. Check the review queue.";
+            return;
+          }
+          answer.textContent = drafted.answer;
+          confidence.textContent = `Confidence: ${(drafted.confidence * 100).toFixed(0)}%`;
+          if (drafted.citations?.length) {
+            citationHeading.hidden = false;
+            for (const citation of drafted.citations) {
+              const item = document.createElement("p");
+              item.className = "citation";
+              item.textContent = `${citation.passage_id}: ${citation.quote || "Source passage cited"}`;
+              citations.append(item);
+            }
+          }
+        } catch (error) {
+          status.textContent = "Could not answer";
+          status.className = "error";
+          answer.textContent = error instanceof Error ? error.message : String(error);
+        } finally {
+          button.disabled = false;
+          button.textContent = "Get evidence-based answer";
+        }
+      });
+    </script>
+  </body>
+</html>
