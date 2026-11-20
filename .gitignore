@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 .qa/
 *.sqlite3
+web/node_modules/
 
 # C extensions
 *.so

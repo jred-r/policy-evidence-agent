@@ -11,6 +11,7 @@ from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..storage.audit import AuditStore
@@ -21,6 +22,8 @@ from ..workflow.answer import answer_question
 
 app = FastAPI(title="Policy Evidence Agent", version="0.1.0")
 _UI_FILE = Path(__file__).parent / "static" / "index.html"
+_UI_ASSETS = Path(__file__).parent / "static" / "assets"
+app.mount("/assets", StaticFiles(directory=_UI_ASSETS), name="assets")
 _app_logger = logging.getLogger("qa")
 _app_logger.setLevel(logging.INFO)
 _app_logger.propagate = False

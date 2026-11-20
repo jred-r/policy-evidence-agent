@@ -19,6 +19,23 @@ foreach ($requiredPath in @($proxyEnv, $proxyCompose, $proxyOverride)) {
     }
 }
 
+$webDirectory = Join-Path $scriptDirectory 'web'
+$staticDirectory = Join-Path $scriptDirectory 'src\qa\interfaces\static'
+$webBuildArgs = @(
+    'run',
+    '--rm',
+    '--mount', "type=bind,source=$webDirectory,target=/web",
+    '--mount', "type=bind,source=$staticDirectory,target=/output",
+    '--workdir', '/web',
+    '--env', 'STATIC_OUTPUT_DIR=/output',
+    'node:22-alpine',
+    'sh', '-c', 'npm ci && npm run build'
+)
+& docker @webBuildArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Building the chat UI failed with exit code $LASTEXITCODE."
+}
+
 $proxyArgs = @(
     'compose',
     '--env-file', $proxyEnv,
