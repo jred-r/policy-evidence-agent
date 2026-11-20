@@ -7,10 +7,12 @@ import json
 import logging
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Protocol, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 
 import yaml
 from psycopg.types.json import Jsonb
@@ -20,6 +22,8 @@ from ..storage.db import connection
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
+LLMMode = Literal["live", "record", "replay", "auto"]
+_mode_override: ContextVar[LLMMode | None] = ContextVar("llm_mode_override", default=None)
 
 
 class BudgetExceeded(RuntimeError):
@@ -41,6 +45,16 @@ def _system_clock() -> datetime:
 
 
 _clock: Callable[[], datetime] = _system_clock
+
+
+@contextmanager
+def override_llm_mode(mode: Literal["record", "replay"]) -> Iterator[None]:
+    """Temporarily select a mode for one workflow draft."""
+    token = _mode_override.set(mode)
+    try:
+        yield
+    finally:
+        _mode_override.reset(token)
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
@@ -180,7 +194,7 @@ def complete(
     messages: Sequence[dict[str, Any]], *, model: str | None = None, **params: Any
 ) -> dict[str, Any]:
     """Complete chat messages through LiteLLM under the selected operating mode."""
-    mode = os.getenv("LLM_MODE", "replay").lower()
+    mode = (_mode_override.get() or os.getenv("LLM_MODE", "replay")).lower()
     if mode not in {"live", "record", "replay", "auto"}:
         raise ValueError(f"Unsupported LLM_MODE: {mode}")
 

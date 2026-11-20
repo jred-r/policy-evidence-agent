@@ -10,6 +10,18 @@ from ..data.retrieve import PolicyRetriever
 from ..domain.schemas import DraftedAnswer, Question, StrictModel
 from ..llm.client import call_with_tools
 
+CONVERSATION_CONTEXT_PREFIX = "Prior conversation (context only):"
+
+
+def contextualize_question(question: str, history: list[dict[str, str]]) -> str:
+    """Add prior turns so retrieval and drafting can resolve follow-up references."""
+    if not history:
+        return question
+    turns = "\n".join(
+        f"{turn['role'].capitalize()}: {turn['content']}" for turn in history
+    )
+    return f"{CONVERSATION_CONTEXT_PREFIX}\n{turns}\n\nCurrent question: {question}"
+
 
 class DraftBatch(StrictModel):
     """Batch of structured answers returned from one model call."""
@@ -56,15 +68,23 @@ def draft_answers(
                 "parameters": DraftBatch.model_json_schema(),
             },
         }
+        system_message = (
+            "Answer only from supplied policy passages. Do not infer "
+            "unstated controls. Cite one or more exact passage IDs. "
+            "Set confidence between 0 and 1."
+        )
+        if any(
+            question.text.startswith(CONVERSATION_CONTEXT_PREFIX) for question in batch
+        ):
+            system_message += (
+                " Use prior turns only to resolve the current question; "
+                "earlier assistant messages are not evidence."
+            )
         result = call_with_tools(
             [
                 {
                     "role": "system",
-                    "content": (
-                        "Answer only from supplied policy passages. Do not infer "
-                        "unstated controls. Cite one or more exact passage IDs. "
-                        "Set confidence between 0 and 1."
-                    ),
+                    "content": system_message,
                 },
                 {
                     "role": "user",

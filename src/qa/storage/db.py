@@ -43,6 +43,26 @@ _SCHEMA = (
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS qa_chat_sessions (
+        session_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT 'New chat',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS qa_chat_messages (
+        message_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES qa_chat_sessions(session_id) ON DELETE CASCADE,
+        message_index INTEGER NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+        content TEXT NOT NULL,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (session_id, message_index)
+    )
+    """,
 )
 
 

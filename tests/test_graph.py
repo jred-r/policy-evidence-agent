@@ -91,3 +91,42 @@ def test_low_grounding_after_retry_enters_persistent_review_queue() -> None:
     assert result["status"] == "review"
     assert len(store.list_pending()) == 1
     assert store.list_pending()[0]["question_id"] == "Q2"
+
+
+def test_follow_up_context_reaches_retrieval_and_drafting() -> None:
+    class CapturingRetriever(FakeRetriever):
+        queries: list[str]
+
+        def __init__(self) -> None:
+            self.queries = []
+
+        def retrieve(self, question: str, k: int = 5) -> list[RetrievedPassage]:
+            self.queries.append(question)
+            return super().retrieve(question, k)
+
+    history = [
+        {"role": "user", "content": "What does the policy say about privileged access?"},
+        {
+            "role": "assistant",
+            "content": "Privileged requests are approved and recorded.",
+        },
+    ]
+    retriever = CapturingRetriever()
+    drafted_questions: list[Question] = []
+
+    def draft(question: Question, passages: list[RetrievedPassage]) -> DraftedAnswer:
+        drafted_questions.append(question)
+        return _answer(question, "Every privileged request is approved and recorded.")
+
+    graph = create_workflow(
+        retriever=retriever,
+        draft_function=draft,
+        conversation_history=history,
+    )
+    result = graph.invoke(
+        {"question_id": "Q3", "question": "How often is it reviewed?"}
+    )
+
+    assert result["status"] == "answered"
+    assert "What does the policy say about privileged access?" in retriever.queries[0]
+    assert "How often is it reviewed?" in drafted_questions[0].text

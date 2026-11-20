@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 from ..data.retrieve import PolicyRetriever, RetrievedPassage
 from ..domain.schemas import DraftedAnswer, Question
+from ..llm.client import override_llm_mode
 from ..storage.db import database_url
 from ..storage.review import ReviewStore
-from .draft import draft_answers
+from .draft import contextualize_question, draft_answers
 from .scoring import grounding_f1
 
 
@@ -39,10 +40,13 @@ def create_workflow(
     checkpointer: Any = None,
     draft_function: DraftFunction | None = None,
     interrupt_before: list[str] | None = None,
+    conversation_history: list[dict[str, str]] | None = None,
+    llm_mode: Literal["record", "replay"] | None = None,
 ) -> Any:
     """Build the resumable parse/retrieve/draft/score/retry/review graph."""
     policy_retriever = retriever or PolicyRetriever()
     reviews = review_store or ReviewStore()
+    history = conversation_history or []
 
     def parse(state: WorkflowState) -> dict[str, Any]:
         if not state.get("question_id") or not state.get("question"):
@@ -50,7 +54,8 @@ def create_workflow(
         return {"attempts": int(state.get("attempts", 0))}
 
     def retrieve(state: WorkflowState) -> dict[str, Any]:
-        passages = policy_retriever.retrieve(state["question"], k=5)
+        question = contextualize_question(state["question"], history)
+        passages = policy_retriever.retrieve(question, k=5)
         return {
             "passages": [
                 {
@@ -64,14 +69,20 @@ def create_workflow(
         }
 
     def draft(state: WorkflowState) -> dict[str, Any]:
-        question = Question(id=state["question_id"], text=state["question"])
+        question = Question(
+            id=state["question_id"],
+            text=contextualize_question(state["question"], history),
+        )
         passages = [
             RetrievedPassage(**item) for item in state.get("passages", [])
         ]
         if draft_function:
             answer = draft_function(question, passages)
-        else:
+        elif llm_mode is None:
             answer = draft_answers([question], policy_retriever, batch_size=1)[0]
+        else:
+            with override_llm_mode(llm_mode):
+                answer = draft_answers([question], policy_retriever, batch_size=1)[0]
         if answer.question_id != question.id:
             raise ValueError("Draft returned an answer for a different question")
         return {"answer": answer.model_dump(), "attempts": state.get("attempts", 0) + 1}
@@ -118,6 +129,7 @@ def create_workflow(
             state["question_id"],
             {
                 "question": state["question"],
+                "conversation_history": history,
                 "answer": item,
                 "grounding_f1": state.get("best_score", state.get("score", 0.0)),
                 "passages": state.get("passages", []),
@@ -154,6 +166,8 @@ def run_workflow(
     retriever: PolicyRetriever | None = None,
     review_store: ReviewStore | None = None,
     draft_function: DraftFunction | None = None,
+    conversation_history: list[dict[str, str]] | None = None,
+    llm_mode: Literal["record", "replay"] | None = None,
 ) -> WorkflowState:
     """Run or resume a workflow using a persistent PostgreSQL checkpoint."""
     from langgraph.checkpoint.postgres import PostgresSaver
@@ -165,6 +179,8 @@ def run_workflow(
             review_store=review_store,
             checkpointer=saver,
             draft_function=draft_function,
+            conversation_history=conversation_history,
+            llm_mode=llm_mode,
         )
         return graph.invoke(
             {"question_id": question_id, "question": question},

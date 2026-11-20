@@ -70,6 +70,19 @@ def test_record_response_is_reused_in_replay(monkeypatch: pytest.MonkeyPatch) ->
     assert router.calls == 1
 
 
+def test_scoped_record_mode_resets_to_replay(monkeypatch: pytest.MonkeyPatch) -> None:
+    router = FakeRouter(_response('{"ok": true}'))
+    llm.set_router_for_tests(router)
+
+    with llm.override_llm_mode("record"):
+        recorded = llm.complete([{"role": "user", "content": "record this"}])
+
+    assert recorded["choices"][0]["message"]["content"] == '{"ok": true}'
+    with pytest.raises(LookupError, match="No recorded model response"):
+        llm.complete([{"role": "user", "content": "do not call live"}])
+    assert router.calls == 1
+
+
 def test_budget_counts_failed_attempts_and_rolls_over(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
