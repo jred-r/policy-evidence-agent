@@ -5,6 +5,7 @@ import asyncio
 from fastapi.testclient import TestClient
 
 from qa.interfaces import a2a_app, mcp_server
+from qa.storage.chat import ChatStore
 from qa.storage.review import ReviewStore
 
 
@@ -17,6 +18,63 @@ def test_review_decision_persists_edited_final_answer() -> None:
     assert result["answer"] == "Human-approved answer"
     assert store.list_pending() == []
     assert store.get_final("Q1")["answer"] == "Human-approved answer"
+
+
+def test_review_api_and_activity_log() -> None:
+    store = ReviewStore()
+    session_id = ChatStore().create_session()["session_id"]
+    store.enqueue(
+        "Q-review",
+        {
+            "question": "Can reviewers see this?",
+            "answer": {"answer": "Draft response", "confidence": 0.4},
+            "passages": [],
+        },
+    )
+    ChatStore().add_message(
+        session_id,
+        "assistant",
+        "Draft response",
+        {"question_id": "Q-review", "status": "review"},
+    )
+    client = TestClient(a2a_app.app)
+
+    pending = client.get("/reviews")
+    decision = client.post(
+        "/reviews/Q-review/decision",
+        json={"approved": True, "edited_answer": "Reviewed response"},
+    )
+    activity = client.get("/activity")
+
+    assert pending.status_code == 200
+    assert pending.json()["pending_count"] == 1
+    assert pending.json()["reviews"][0]["question"] == "Can reviewers see this?"
+    assert decision.status_code == 200
+    assert decision.json()["answer"] == "Reviewed response"
+    assert client.get("/reviews").json()["pending_count"] == 0
+    saved = ChatStore().get_session(session_id)
+    assert saved["messages"][0]["content"] == "Reviewed response"
+    assert saved["messages"][0]["metadata"]["status"] == "approved"
+    event_types = {event["event_type"] for event in activity.json()["events"]}
+    assert {"review.queued", "review.decided"} <= event_types
+
+
+def test_delete_chat_session_removes_messages_and_logs_event() -> None:
+    store = ChatStore()
+    session_id = store.create_session()["session_id"]
+    store.add_message(session_id, "user", "Remove this")
+    client = TestClient(a2a_app.app)
+
+    deleted = client.delete(f"/sessions/{session_id}")
+
+    assert deleted.status_code == 204
+    assert client.get(f"/sessions/{session_id}").status_code == 404
+    events = client.get("/activity").json()["events"]
+    assert any(
+        event["event_type"] == "chat.deleted" and event["session_id"] == session_id
+        for event in events
+    )
+    assert client.delete(f"/sessions/{session_id}").status_code == 404
 
 
 def test_agent_card_and_task_endpoint(monkeypatch) -> None:
@@ -42,6 +100,8 @@ def test_agent_card_and_task_endpoint(monkeypatch) -> None:
     assert home.status_code == 200
     assert 'id="composer"' in home.text
     assert 'id="session-list"' in home.text
+    assert 'id="review-nav"' in home.text
+    assert 'id="activity-nav"' in home.text
     assert 'id="question-id"' not in home.text
     assert card.status_code == 200
     assert card.json()["name"] == "Policy Evidence Agent"

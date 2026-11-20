@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from psycopg.types.json import Jsonb
 
+from .audit import emit_event, insert_event
 from .db import connection
 
 Role = Literal["user", "assistant"]
@@ -27,6 +28,8 @@ class ChatStore:
                 """,
                 (session_id,),
             ).fetchone()
+            audit_event = insert_event(conn, "chat.created", session_id=session_id)
+        emit_event(audit_event)
         return {
             "session_id": session_id,
             "title": row["title"],
@@ -65,10 +68,19 @@ class ChatStore:
                 return None
             messages = conn.execute(
                 """
-                SELECT message_id, role, content, metadata, created_at
-                FROM qa_chat_messages
-                WHERE session_id = %s
-                ORDER BY message_index
+                SELECT m.message_id, m.role, m.content,
+                    CASE
+                        WHEN m.metadata->>'status' = 'review'
+                            AND r.status IN ('approved', 'rejected')
+                        THEN jsonb_set(m.metadata, '{status}', to_jsonb(r.status), true)
+                        ELSE m.metadata
+                    END AS metadata,
+                    m.created_at
+                FROM qa_chat_messages AS m
+                LEFT JOIN qa_review_queue AS r
+                    ON r.question_id = m.metadata->>'question_id'
+                WHERE m.session_id = %s
+                ORDER BY m.message_index
                 """,
                 (session_id,),
             ).fetchall()
@@ -98,6 +110,7 @@ class ChatStore:
     ) -> dict[str, Any]:
         """Append a user or assistant message and update session activity."""
         message_id = str(uuid.uuid4())
+        audit_event = None
         with connection() as conn:
             with conn.transaction():
                 session = conn.execute(
@@ -146,6 +159,28 @@ class ChatStore:
                     """,
                     (title, session_id),
                 )
+                if role == "user" and metadata and metadata.get("question_id"):
+                    audit_event = insert_event(
+                        conn,
+                        "chat.message.received",
+                        session_id=session_id,
+                        question_id=str(metadata["question_id"]),
+                        details={"live_mode": bool(metadata.get("live_mode", False))},
+                    )
+                elif role == "assistant" and metadata and metadata.get("question_id"):
+                    audit_event = insert_event(
+                        conn,
+                        "chat.message.completed",
+                        session_id=session_id,
+                        question_id=str(metadata["question_id"]),
+                        details={
+                            "status": metadata.get("status", "unknown"),
+                            "live_mode": bool(metadata.get("live_mode", False)),
+                            "confidence": metadata.get("confidence"),
+                        },
+                    )
+        if audit_event:
+            emit_event(audit_event)
         return {
             "message_id": message_id,
             "role": role,
@@ -153,3 +188,25 @@ class ChatStore:
             "metadata": metadata or {},
             "created_at": row["created_at"],
         }
+
+    def delete_session(self, session_id: str) -> bool:
+        """Delete a session and its messages while preserving a deletion event."""
+        with connection() as conn:
+            with conn.transaction():
+                deleted = conn.execute(
+                    """
+                    DELETE FROM qa_chat_sessions
+                    WHERE session_id = %s
+                    RETURNING session_id
+                    """,
+                    (session_id,),
+                ).fetchone()
+                if deleted is None:
+                    return False
+                audit_event = insert_event(
+                    conn,
+                    "chat.deleted",
+                    session_id=session_id,
+                )
+        emit_event(audit_event)
+        return True

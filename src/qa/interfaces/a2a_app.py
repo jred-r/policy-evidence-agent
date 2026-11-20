@@ -2,21 +2,36 @@
 
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..storage.audit import AuditStore
 from ..storage.chat import ChatStore
 from ..storage.db import connection
+from ..storage.review import ReviewStore
 from ..workflow.graph import run_workflow
 
 app = FastAPI(title="Policy Evidence Agent", version="0.1.0")
 _UI_FILE = Path(__file__).parent / "static" / "index.html"
+_app_logger = logging.getLogger("qa")
+_app_logger.setLevel(logging.INFO)
+_app_logger.propagate = False
+if not any(getattr(handler, "_qa_app_handler", False) for handler in _app_logger.handlers):
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    )
+    _handler._qa_app_handler = True
+    _app_logger.addHandler(_handler)
+logger = logging.getLogger(__name__)
 
 
 class TaskRequest(BaseModel):
@@ -33,6 +48,32 @@ class ChatMessageRequest(BaseModel):
 
     content: str = Field(min_length=1, max_length=4000)
     live_mode: bool = False
+
+
+class ReviewDecisionRequest(BaseModel):
+    """Human decision for one pending review item."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool
+    edited_answer: str | None = Field(default=None, min_length=1, max_length=4000)
+
+
+@app.middleware("http")
+async def log_http_requests(request, call_next):
+    """Log request outcomes without recording bodies, headers, or question text."""
+    started = time.monotonic()
+    response = await call_next(request)
+    route = request.scope.get("route")
+    path = getattr(route, "path", request.url.path)
+    logger.info(
+        "http_request method=%s path=%s status_code=%s duration_ms=%.2f",
+        request.method,
+        path,
+        response.status_code,
+        (time.monotonic() - started) * 1000,
+    )
+    return response
 
 
 @app.get("/", include_in_schema=False)
@@ -109,6 +150,50 @@ def get_session(session_id: UUID) -> dict[str, Any]:
     return session
 
 
+@app.delete("/sessions/{session_id}", status_code=204)
+def delete_session(session_id: UUID) -> Response:
+    """Delete a chat and its messages."""
+    if not ChatStore().delete_session(str(session_id)):
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return Response(status_code=204)
+
+
+@app.get("/reviews")
+def list_reviews() -> dict[str, Any]:
+    """List pending human-review items."""
+    reviews = ReviewStore().list_pending()
+    return {"reviews": reviews, "pending_count": len(reviews)}
+
+
+@app.post("/reviews/{question_id}/decision")
+def decide_review(
+    question_id: str,
+    request: ReviewDecisionRequest,
+) -> dict[str, Any]:
+    """Approve or reject a pending item, optionally editing its answer."""
+    edited_answer = request.edited_answer
+    if edited_answer is not None:
+        edited_answer = edited_answer.strip()
+        if not edited_answer:
+            raise HTTPException(status_code=422, detail="Edited answer cannot be blank")
+    try:
+        return ReviewStore().decide(
+            question_id,
+            approved=request.approved,
+            edited_answer=edited_answer,
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.get("/activity")
+def list_activity(limit: int = Query(default=100, ge=1, le=200)) -> dict[str, Any]:
+    """Return recent operational audit events."""
+    return {"events": AuditStore().list_recent(limit)}
+
+
 @app.post("/sessions/{session_id}/messages")
 def create_chat_message(
     session_id: UUID,
@@ -124,8 +209,13 @@ def create_chat_message(
         raise HTTPException(status_code=422, detail="Message cannot be blank")
 
     history = store.recent_context(selected_session)
-    store.add_message(selected_session, "user", question)
     question_id = str(uuid.uuid4())
+    store.add_message(
+        selected_session,
+        "user",
+        question,
+        {"question_id": question_id, "live_mode": request.live_mode},
+    )
     try:
         result = run_workflow(
             question_id,
@@ -135,6 +225,18 @@ def create_chat_message(
             llm_mode="record" if request.live_mode else "replay",
         )
     except (ValueError, LookupError) as error:
+        event = AuditStore().record(
+            "chat.message.failed",
+            session_id=selected_session,
+            question_id=question_id,
+            details={"error_type": type(error).__name__},
+        )
+        logger.warning(
+            "workflow_failed session_id=%s question_id=%s error_type=%s",
+            selected_session,
+            question_id,
+            event["details"]["error_type"],
+        )
         raise _workflow_error(error) from error
 
     status = str(result.get("status", "unknown"))
@@ -146,10 +248,15 @@ def create_chat_message(
             "question_id": question_id,
             "confidence": answer.get("confidence"),
             "citations": answer.get("citations", []),
+            "live_mode": request.live_mode,
         }
     else:
         content = "I could not produce an evidence-grounded answer."
-        metadata = {"status": status, "question_id": question_id}
+        metadata = {
+            "status": status,
+            "question_id": question_id,
+            "live_mode": request.live_mode,
+        }
     message = store.add_message(selected_session, "assistant", content, metadata)
     return {
         "session_id": selected_session,

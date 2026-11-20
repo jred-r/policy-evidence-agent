@@ -35,6 +35,16 @@ _SCHEMA = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS qa_audit_events (
+        event_id BIGSERIAL PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        session_id TEXT,
+        question_id TEXT,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS qa_policy_passages (
         passage_id TEXT PRIMARY KEY,
         document_id TEXT NOT NULL,

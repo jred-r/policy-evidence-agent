@@ -21,6 +21,6 @@ def isolate_postgres_test_data(monkeypatch: pytest.MonkeyPatch) -> None:
     with connection(dsn) as conn:
         conn.execute(
             "TRUNCATE qa_llm_responses, qa_llm_daily_budget, "
-            "qa_review_queue, qa_policy_passages, "
+            "qa_review_queue, qa_audit_events, qa_policy_passages, "
             "qa_chat_messages, qa_chat_sessions"
         )

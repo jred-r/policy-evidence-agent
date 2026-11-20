@@ -103,8 +103,36 @@
       }
 
       #new-chat:hover,
-      .session-button:hover {
+      .session-button:hover,
+      .side-nav:hover {
         background: var(--hover);
+      }
+
+      .side-nav {
+        display: flex;
+        width: 100%;
+        justify-content: space-between;
+        margin-top: 8px;
+        padding: 9px 10px;
+        border: 0;
+        border-radius: 8px;
+        color: var(--text);
+        background: transparent;
+        text-align: left;
+      }
+
+      .side-nav.active {
+        color: var(--active-text);
+        background: var(--active-bg);
+      }
+
+      .count-badge {
+        min-width: 22px;
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: var(--border);
+        font-size: 0.75rem;
+        text-align: center;
       }
 
       .sidebar-heading {
@@ -123,8 +151,17 @@
         overflow-y: auto;
       }
 
+      .session-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        min-width: 0;
+      }
+
       .session-button {
         display: flex;
+        min-width: 0;
+        flex: 1;
         flex-direction: column;
         gap: 4px;
         width: 100%;
@@ -135,6 +172,19 @@
         color: var(--text);
         background: transparent;
         text-align: left;
+      }
+
+      .session-delete {
+        padding: 8px;
+        border: 0;
+        border-radius: 7px;
+        color: var(--muted);
+        background: transparent;
+      }
+
+      .session-delete:hover {
+        color: var(--error-text);
+        background: var(--error-bg);
       }
 
       .session-button.active {
@@ -333,6 +383,122 @@
         overflow-wrap: anywhere;
       }
 
+      .review-layout {
+        display: grid;
+        width: min(1050px, 100%);
+        height: 100%;
+        min-height: 0;
+        grid-template-columns: minmax(210px, 0.7fr) minmax(0, 1.5fr);
+        gap: 18px;
+        margin: 0 auto;
+      }
+
+      .review-list,
+      .review-detail,
+      .activity-list {
+        min-height: 0;
+        overflow: auto;
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel-bg);
+      }
+
+      .review-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .review-item {
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        background: var(--panel-bg);
+        text-align: left;
+      }
+
+      .review-item.active,
+      .review-item:hover {
+        border-color: var(--accent);
+        background: var(--hover);
+      }
+
+      .review-item span,
+      .activity-row span {
+        display: block;
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      .review-detail h2,
+      .review-detail h3 {
+        margin: 0 0 10px;
+      }
+
+      .review-question {
+        margin: 0 0 18px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+
+      #review-answer {
+        width: 100%;
+        min-height: 150px;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        color: var(--text);
+        background: var(--app-bg);
+        font: inherit;
+        line-height: 1.5;
+      }
+
+      .review-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .review-actions button,
+      .activity-refresh {
+        padding: 9px 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text);
+        background: var(--panel-bg);
+      }
+
+      .review-actions .approve {
+        border-color: var(--accent);
+        color: #fff;
+        background: var(--accent);
+      }
+
+      .activity-list {
+        width: min(1050px, 100%);
+        margin: 0 auto;
+      }
+
+      .activity-row {
+        padding: 12px 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .activity-row:last-child {
+        border-bottom: 0;
+      }
+
+      .activity-event {
+        overflow-wrap: anywhere;
+        color: var(--muted);
+        font-family: Consolas, monospace;
+        font-size: 0.8rem;
+      }
+
       #composer {
         padding: 18px 24px 20px;
         border-top: 1px solid var(--border);
@@ -396,7 +562,7 @@
         }
 
         .sidebar {
-          max-height: 190px;
+          max-height: 260px;
           padding: 12px;
           border-right: 0;
           border-bottom: 1px solid var(--border);
@@ -411,13 +577,29 @@
         }
 
         #session-list {
+          min-height: 54px;
           flex-direction: row;
           overflow-x: auto;
           overflow-y: hidden;
         }
 
+        .session-row {
+          flex: 0 0 235px;
+        }
+
         .session-button {
-          flex: 0 0 190px;
+          flex: 1;
+        }
+
+        .review-layout {
+          grid-template-columns: minmax(120px, 0.75fr) minmax(0, 1.25fr);
+          gap: 8px;
+        }
+
+        .review-list,
+        .review-detail,
+        .activity-list {
+          padding: 10px;
         }
 
         .topbar {
@@ -471,6 +653,10 @@
         <p>Answers grounded in your policies</p>
       </div>
       <button id="new-chat" type="button">+ New chat</button>
+      <button id="review-nav" class="side-nav" type="button">
+        <span>Human review</span><span id="review-count" class="count-badge">0</span>
+      </button>
+      <button id="activity-nav" class="side-nav" type="button">Activity log</button>
       <h2 class="sidebar-heading">Your chats</h2>
       <nav id="session-list" aria-label="Saved chats"></nav>
     </aside>
@@ -478,7 +664,7 @@
       <header class="topbar">
         <div>
           <h1 id="current-title">New chat</h1>
-          <p>Ask follow-ups. Answers include policy citations.</p>
+          <p id="current-subtitle">Ask follow-ups. Answers include policy citations.</p>
         </div>
         <div class="topbar-actions">
           <label class="setting-toggle" title="Use LiteLLM for uncached messages. Usage may apply.">
@@ -518,7 +704,11 @@
     <script>
       const newChatButton = document.querySelector("#new-chat");
       const sessionList = document.querySelector("#session-list");
+      const reviewNav = document.querySelector("#review-nav");
+      const reviewCount = document.querySelector("#review-count");
+      const activityNav = document.querySelector("#activity-nav");
       const currentTitle = document.querySelector("#current-title");
+      const currentSubtitle = document.querySelector("#current-subtitle");
       const connectionStatus = document.querySelector("#connection-status");
       const chatLog = document.querySelector("#chat-log");
       const emptyState = document.querySelector("#empty-state");
@@ -531,11 +721,14 @@
 
       let selectedSessionId = null;
       let sessions = [];
+      let reviewItems = [];
+      let selectedReviewId = null;
+      let activeView = "chat";
       let sending = false;
 
       async function request(url, options = {}) {
         const response = await fetch(url, options);
-        const payload = await response.json();
+        const payload = response.status === 204 ? null : await response.json();
         if (!response.ok) {
           throw new Error(payload.detail || `Request failed (${response.status})`);
         }
@@ -564,10 +757,12 @@
       function renderSessions() {
         sessionList.replaceChildren();
         for (const session of sessions) {
+          const row = document.createElement("div");
+          row.className = "session-row";
           const button = document.createElement("button");
           button.type = "button";
           button.className = "session-button";
-          if (session.session_id === selectedSessionId) {
+          if (activeView === "chat" && session.session_id === selectedSessionId) {
             button.classList.add("active");
           }
           const title = document.createElement("span");
@@ -578,8 +773,17 @@
           date.textContent = new Date(session.updated_at).toLocaleString();
           button.append(title, date);
           button.addEventListener("click", () => selectSession(session.session_id));
-          sessionList.append(button);
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "session-delete";
+          remove.textContent = "Delete";
+          remove.setAttribute("aria-label", `Delete chat: ${session.title}`);
+          remove.addEventListener("click", () => deleteSession(session.session_id));
+          row.append(button, remove);
+          sessionList.append(row);
         }
+        reviewNav.classList.toggle("active", activeView === "review");
+        activityNav.classList.toggle("active", activeView === "activity");
       }
 
       function renderMessage(role, content, metadata = {}) {
@@ -598,7 +802,11 @@
 
         if (role === "assistant") {
           if (metadata.status === "review") {
-            addMeta(bubble, "Sent for human review");
+            addMeta(bubble, "Queued for human review. Open Human review to decide.");
+          } else if (metadata.status === "approved") {
+            addMeta(bubble, "Human review approved");
+          } else if (metadata.status === "rejected") {
+            addMeta(bubble, "Human review rejected");
           }
           if (typeof metadata.confidence === "number") {
             addMeta(bubble, `Confidence: ${(metadata.confidence * 100).toFixed(0)}%`);
@@ -631,11 +839,19 @@
         renderSessions();
       }
 
+      async function refreshReviewCount() {
+        const response = await request("/reviews");
+        reviewCount.textContent = String(response.pending_count);
+      }
+
       async function selectSession(sessionId) {
         const session = await request(`/sessions/${encodeURIComponent(sessionId)}`);
+        activeView = "chat";
         selectedSessionId = session.session_id;
         localStorage.setItem("policyEvidenceSession", selectedSessionId);
         currentTitle.textContent = session.title;
+        currentSubtitle.textContent = "Ask follow-ups. Answers include policy citations.";
+        composer.hidden = false;
         chatLog.replaceChildren();
         emptyState.hidden = session.messages.length > 0;
         chatLog.append(emptyState);
@@ -662,6 +878,199 @@
         renderSessions();
         await selectSession(target.session_id);
       }
+
+      async function deleteSession(sessionId) {
+        const session = sessions.find((item) => item.session_id === sessionId);
+        if (sending && sessionId === selectedSessionId) {
+          setStatus("Wait for the current response before deleting this chat", true);
+          return;
+        }
+        if (!session || !window.confirm(`Delete "${session.title}" and all its messages?`)) {
+          return;
+        }
+        try {
+          await request(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+          await refreshSessions();
+          if (sessionId === selectedSessionId) {
+            localStorage.removeItem("policyEvidenceSession");
+            if (sessions.length === 0) {
+              const created = await request("/sessions", { method: "POST" });
+              sessions = [created];
+              renderSessions();
+            }
+            await selectSession(sessions[0].session_id);
+          }
+          setStatus("Chat deleted");
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      }
+
+      function element(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) {
+          node.className = className;
+        }
+        if (text !== undefined) {
+          node.textContent = text;
+        }
+        return node;
+      }
+
+      function renderReviewView() {
+        chatLog.replaceChildren();
+        const layout = element("div", "review-layout");
+        const list = element("div", "review-list");
+        list.setAttribute("aria-label", "Pending review items");
+        if (reviewItems.length === 0) {
+          list.append(element("p", "", "No answers are waiting for review."));
+        }
+        for (const item of reviewItems) {
+          const button = element("button", "review-item");
+          button.type = "button";
+          button.classList.toggle("active", item.question_id === selectedReviewId);
+          button.append(
+            element("strong", "", item.question || "Untitled question"),
+            element("span", "", `Reference: ${item.question_id}`),
+          );
+          button.addEventListener("click", () => {
+            selectedReviewId = item.question_id;
+            renderReviewView();
+          });
+          list.append(button);
+        }
+        layout.append(list);
+
+        const detail = element("div", "review-detail");
+        detail.setAttribute("aria-live", "polite");
+        const item = reviewItems.find((review) => review.question_id === selectedReviewId)
+          || reviewItems[0];
+        if (item) {
+          selectedReviewId = item.question_id;
+          detail.append(
+            element("h2", "", "Question"),
+            element("p", "review-question", item.question || "No question text recorded."),
+            element("h3", "", "Draft answer — edit before approving if needed"),
+          );
+          const answerInput = element("textarea");
+          answerInput.id = "review-answer";
+          answerInput.maxLength = 4000;
+          answerInput.value = item.answer?.answer || "";
+          answerInput.setAttribute("aria-label", "Draft answer for review");
+          detail.append(answerInput);
+          if (typeof item.grounding_f1 === "number") {
+            detail.append(element("p", "message-meta", `Grounding score: ${(item.grounding_f1 * 100).toFixed(0)}%`));
+          }
+          for (const passage of item.passages || []) {
+            detail.append(element("p", "citation", `${passage.passage_id}: ${passage.text}`));
+          }
+          const actions = element("div", "review-actions");
+          const approve = element("button", "approve", "Approve answer");
+          approve.type = "button";
+          approve.addEventListener("click", () => submitReviewDecision(item, true));
+          const reject = element("button", "", "Reject answer");
+          reject.type = "button";
+          reject.addEventListener("click", () => submitReviewDecision(item, false));
+          actions.append(approve, reject);
+          detail.append(actions);
+        } else {
+          detail.append(
+            element("h2", "", "Human review"),
+            element("p", "", "Review decisions are recorded in the activity log."),
+          );
+        }
+        layout.append(detail);
+        chatLog.append(layout);
+      }
+
+      async function showReviews() {
+        activeView = "review";
+        composer.hidden = true;
+        currentTitle.textContent = "Human review";
+        currentSubtitle.textContent = "Inspect uncertain answers, edit drafts, then approve or reject.";
+        renderSessions();
+        try {
+          const result = await request("/reviews");
+          reviewItems = result.reviews;
+          reviewCount.textContent = String(result.pending_count);
+          if (!reviewItems.some((item) => item.question_id === selectedReviewId)) {
+            selectedReviewId = reviewItems[0]?.question_id || null;
+          }
+          renderReviewView();
+          setStatus(`${result.pending_count} pending`);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      }
+
+      async function submitReviewDecision(item, approved) {
+        const answerInput = document.querySelector("#review-answer");
+        const editedAnswer = answerInput.value.trim();
+        if (approved && !editedAnswer) {
+          setStatus("An approved answer cannot be blank", true);
+          return;
+        }
+        if (!approved && !window.confirm("Reject this answer?")) {
+          return;
+        }
+        const body = { approved };
+        if (approved && editedAnswer !== item.answer?.answer) {
+          body.edited_answer = editedAnswer;
+        }
+        try {
+          await request(`/reviews/${encodeURIComponent(item.question_id)}/decision`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          selectedReviewId = null;
+          setStatus(approved ? "Answer approved" : "Answer rejected");
+          await showReviews();
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      }
+
+      async function showActivity() {
+        activeView = "activity";
+        composer.hidden = true;
+        currentTitle.textContent = "Activity log";
+        currentSubtitle.textContent = "Recent workflow, review, and chat events. Message text is not logged.";
+        renderSessions();
+        try {
+          const response = await request("/activity?limit=100");
+          chatLog.replaceChildren();
+          const list = element("div", "activity-list");
+          if (response.events.length === 0) {
+            list.append(element("p", "", "No activity recorded yet."));
+          }
+          for (const event of response.events) {
+            const row = element("article", "activity-row");
+            row.append(
+              element("strong", "", event.event_type),
+              element("span", "", new Date(event.created_at).toLocaleString()),
+              element(
+                "span",
+                "activity-event",
+                [
+                  event.session_id && `session=${event.session_id}`,
+                  event.question_id && `reference=${event.question_id}`,
+                  Object.keys(event.details || {}).length > 0
+                    && JSON.stringify(event.details),
+                ].filter(Boolean).join(" · ") || "No additional details",
+              ),
+            );
+            list.append(row);
+          }
+          chatLog.append(list);
+          setStatus(`${response.events.length} recent events`);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : String(error), true);
+        }
+      }
+
+      reviewNav.addEventListener("click", showReviews);
+      activityNav.addEventListener("click", showActivity);
 
       newChatButton.addEventListener("click", async () => {
         newChatButton.disabled = true;
@@ -702,6 +1111,11 @@
           );
           if (selectedSessionId === sessionId) {
             renderMessage("assistant", result.message.content, result.message.metadata);
+            if (result.status === "review") {
+              const reviews = await request("/reviews");
+              reviewItems = reviews.reviews;
+              reviewCount.textContent = String(reviews.pending_count);
+            }
           }
           await refreshSessions();
           setStatus("Saved");
@@ -739,6 +1153,9 @@
       updateModeHint();
 
       loadSessions().catch((error) => {
+        setStatus(error instanceof Error ? error.message : String(error), true);
+      });
+      refreshReviewCount().catch((error) => {
         setStatus(error instanceof Error ? error.message : String(error), true);
       });
     </script>
