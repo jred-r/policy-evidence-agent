@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, Required, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -15,12 +17,14 @@ from ..storage.review import ReviewStore
 from .draft import contextualize_question, draft_answers
 from .scoring import grounding_f1
 
+logger = logging.getLogger(__name__)
+
 
 class WorkflowState(TypedDict, total=False):
     """Persisted workflow state."""
 
-    question_id: str
-    question: str
+    question_id: Required[str]
+    question: Required[str]
     passages: list[dict[str, Any]]
     answer: dict[str, Any]
     best_answer: dict[str, Any]
@@ -56,6 +60,11 @@ def create_workflow(
     def retrieve(state: WorkflowState) -> dict[str, Any]:
         question = contextualize_question(state["question"], history)
         passages = policy_retriever.retrieve(question, k=5)
+        logger.info(
+            "workflow_retrieval question_id=%s passage_count=%s",
+            state["question_id"],
+            len(passages),
+        )
         return {
             "passages": [
                 {
@@ -85,12 +94,23 @@ def create_workflow(
                 answer = draft_answers([question], policy_retriever, batch_size=1)[0]
         if answer.question_id != question.id:
             raise ValueError("Draft returned an answer for a different question")
+        logger.info(
+            "workflow_draft question_id=%s attempt=%s",
+            state["question_id"],
+            state.get("attempts", 0) + 1,
+        )
         return {"answer": answer.model_dump(), "attempts": state.get("attempts", 0) + 1}
 
     def score(state: WorkflowState) -> dict[str, Any]:
         answer = DraftedAnswer.model_validate(state["answer"])
         source_text = {item["passage_id"]: item["text"] for item in state["passages"]}
         current_score = grounding_f1(answer, source_text)
+        logger.info(
+            "workflow_scored question_id=%s grounding_f1=%.4f attempt=%s",
+            state["question_id"],
+            current_score,
+            state["attempts"],
+        )
         previous_score = float(state.get("best_score", -1.0))
         if current_score >= previous_score:
             best_answer = answer.model_dump()
@@ -172,17 +192,34 @@ def run_workflow(
     """Run or resume a workflow using a persistent PostgreSQL checkpoint."""
     from langgraph.checkpoint.postgres import PostgresSaver
 
-    with PostgresSaver.from_conn_string(database_url()) as saver:
-        saver.setup()
-        graph = create_workflow(
-            retriever=retriever,
-            review_store=review_store,
-            checkpointer=saver,
-            draft_function=draft_function,
-            conversation_history=conversation_history,
-            llm_mode=llm_mode,
+    started = time.monotonic()
+    logger.info("workflow_started question_id=%s thread_id=%s", question_id, thread_id)
+    try:
+        with PostgresSaver.from_conn_string(database_url()) as saver:
+            saver.setup()
+            graph = create_workflow(
+                retriever=retriever,
+                review_store=review_store,
+                checkpointer=saver,
+                draft_function=draft_function,
+                conversation_history=conversation_history,
+                llm_mode=llm_mode,
+            )
+            result = graph.invoke(
+                {"question_id": question_id, "question": question},
+                config={"configurable": {"thread_id": thread_id}},
+            )
+    except Exception as error:
+        logger.error(
+            "workflow_failed question_id=%s error_type=%s",
+            question_id,
+            type(error).__name__,
         )
-        return graph.invoke(
-            {"question_id": question_id, "question": question},
-            config={"configurable": {"thread_id": thread_id}},
-        )
+        raise
+    logger.info(
+        "workflow_completed question_id=%s status=%s duration_ms=%.2f",
+        question_id,
+        result.get("status", "unknown"),
+        (time.monotonic() - started) * 1000,
+    )
+    return result

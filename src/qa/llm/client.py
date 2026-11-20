@@ -208,12 +208,25 @@ def complete(
     cached = _read_replay(key) if mode in {"record", "replay", "auto"} else None
     if cached is not None:
         _trace(cached.get("model"), True, started, None)
+        logger.info(
+            "llm_cache_hit model=%s mode=%s latency_ms=%.2f",
+            cached.get("model", deployment),
+            mode,
+            (time.monotonic() - started) * 1000,
+        )
         return cached
     if mode == "replay":
+        logger.warning("llm_replay_miss model=%s mode=%s", deployment, mode)
         raise LookupError(f"No recorded model response for key {key}")
 
     request_count = _consume_budget()
     router = _get_router()
+    logger.info(
+        "llm_request_started model=%s mode=%s daily_request=%s",
+        deployment,
+        mode,
+        request_count,
+    )
     try:
         _enable_callbacks()
         response = router.completion(model=deployment, messages=list(messages), **params)
@@ -222,6 +235,12 @@ def complete(
             raise TypeError("LiteLLM returned a non-object response")
         if mode in {"record", "auto"}:
             _write_replay(key, data)
+        logger.info(
+            "llm_request_completed model=%s mode=%s latency_ms=%.2f",
+            deployment,
+            mode,
+            (time.monotonic() - started) * 1000,
+        )
         return data
     except Exception as error:
         logger.error(

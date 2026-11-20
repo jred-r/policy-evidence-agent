@@ -19,4 +19,7 @@ messages persist in PostgreSQL and can be reopened from the sidebar; `/health`
 checks the API and database connection. Set `LLM_MODE=record` in the proxy
 environment file before running the script to make model calls and save
 responses. The default, `replay`, requires responses already stored in
-PostgreSQL.
+PostgreSQL. Use Human review and Activity log in the UI for review decisions
+and audit events. Application request, workflow, and model logs go to the API
+container output:
+`docker compose --env-file '..\litellm-enterprise-proxy\.env' -f 'compose.yaml' logs -f api`.
